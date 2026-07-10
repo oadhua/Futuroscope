@@ -1,0 +1,14 @@
+# Bỏ qua tất cả các thư mục môi trường ảo tự tạo
+.venv/
+venv/
+.venv310/
+.py310
+
+# Bỏ qua các file cache biên dịch của Python (giúp repo sạch hơn)
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Bỏ qua các file cấu hình ẩn của VS Code nếu không cần thiết
+.vscode/
