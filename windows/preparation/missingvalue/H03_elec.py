@@ -4,7 +4,7 @@ import numpy as np
 # ==============================================================================
 # 1. CHARGEMENT DU MASTER FILE BRUT CONSOLIDÉ
 # ==============================================================================
-master_path = "D:\\Stage SI\\Machine Learning\\Futuroscope\\windows\\donne_clean\\master\\master_H03.csv"
+master_path = "D:\\Stage SI\\Machine Learning\\Futuroscope\\windows\\donne_clean\\master\\master_H03_elec.csv"
 df_master = pd.read_csv(master_path)
 
 # ==============================================================================
@@ -61,8 +61,10 @@ for col in colonnes_meteo:
 
 # --- VARIABLE 3 : ÉNERGIE CALORIFIQUE (ec_value) ---
 # Lissage des coupures de données thermiques par interpolation
-if 'ec_value' in df_master.columns:
-    df_master['ec_value'] = df_master['ec_value'].interpolate(method='linear').fillna(0)
+if 'elec_1' in df_master.columns:
+    df_master['elec_1'] = df_master['elec_1'].interpolate(method='linear').fillna(0)
+if 'elec_2' in df_master.columns:
+    df_master['elec_2'] = df_master['elec_2'].interpolate(method='linear').fillna(0)
 
 # ==============================================================================
 # 4. RECONSTITUTION ET SÉCURISATION DES VARIABLES TEMPORELLES
@@ -83,10 +85,12 @@ df_master['id'] = range(1, len(df_master) + 1)
 # ==============================================================================
 # Organisation logique des Features pour l'apprentissage du modèle
 ordre_colonnes = [
-    'date', 'id', 'id_attraction', 'visitor_count', 'ec_value',
+    'date', 'visitor_count', 'elec_1', 'elec_2',
     'cycle_attraction_max', 'duty_cycle_max', 'capacite salle', 'capacite file d\'attente', 'capacite pre-salle',
-    'is_weekend', 'is_open', 'type_frequentation',
-    'temperature', 'humidite', 'rayonnement_solaire', 'temp_moy', 'humidite_moy',
+    'is_weekend','jf', 'is_open', 'type_frequentation',
+    'temperature', 'temp_max', 'temp_min', 'temp_moy',
+    'humidite','humidite_max', 'humidite_min', 'humidite_moy',
+    'rayonnement_solaire',
     'hour', 'min', 'day', 'month', 'year', 'week'
 ]
 
@@ -95,7 +99,7 @@ colonnes_finales = [c for c in ordre_colonnes if c in df_master.columns]
 df_master_clean = df_master[colonnes_finales]
 
 # Sauvegarde du Master File propre pour l'entraînement ML
-output_clean_path = "D:\\Stage SI\\Machine Learning\\Futuroscope\\windows\\donne_clean\\master_clean\\master_H03_clean.csv"
+output_clean_path = "D:\\Stage SI\\Machine Learning\\Futuroscope\\windows\\donne_clean\\master_missing\\master_H03_elec_missing.csv"
 df_master_clean.to_csv(output_clean_path, index=False)
 
 print(f"Master File nettoyé avec succès ! Lignes : {len(df_master_clean)} (Attendu : 8760)")
