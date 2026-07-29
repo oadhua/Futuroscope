@@ -28,17 +28,21 @@ def preparer_features_communes(df):
 def generer_dataset_pure_regression(df_base):
     df = df_base.copy()
     
-    # LOẠI BỎ TOÀN BỘ LAG CỦA EC_VALUE
-    # Chỉ bổ sung các biến bối cảnh thời tiết mở rộng (Trễ nhiệt độ và trung bình trượt nhiệt độ)
-    # df['temp_moyenne_7j'] = df['temperature'].rolling(window=168, min_periods=1).mean()
+    # 1. Các biến trễ nhiệt độ (Thermal Lag) - Quán tính nhiệt tòa nhà
     df['temp_decalage_1h'] = df['temperature'].shift(1)
-    # df['temp_decalage_2h'] = df['temperature'].shift(2)
-    # df['temp_decalage_24h'] = df['temperature'].shift(24)
-    # df['temp_deviation_7j'] = df['temperature'] - df['temp_moyenne_7j']
-    
-    # Không dùng dropna() diện rộng nữa, chỉ drop các dòng NaN do shift nhiệt độ (1-2 dòng đầu)
-    return df.dropna(subset=['temp_decalage_1h']).reset_index(drop=True)
-    # return df.dropna(subset=['temp_decalage_1h', 'temp_decalage_2h', 'temp_decalage_24h']).reset_index(drop=True)
+    df['temp_decalage_2h'] = df['temperature'].shift(2)
+    df['temp_decalage_3h'] = df['temperature'].shift(3)
+
+    # 2. Trung bình trượt nhiệt độ (Rolling Temperature)
+    df['temp_roll_mean_3h'] = (
+        df['temperature'].rolling(window=3, min_periods=1).mean()
+    )
+    df['temp_roll_mean_6h'] = (
+        df['temperature'].rolling(window=6, min_periods=1).mean()
+    )
+
+    # Chỉ loại bỏ 3 dòng đầu do hiệu ứng shift(3)
+    return df.dropna(subset=['temp_decalage_3h']).reset_index(drop=True)
 
 if __name__ == "__main__":
     df_raw = pd.read_csv(r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master_outliers\master_H03_thermal_outliers.csv")

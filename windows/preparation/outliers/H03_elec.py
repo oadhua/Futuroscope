@@ -150,73 +150,73 @@ df['ec_value'] = df['elec_1'] + df['elec_2']
 
 print("-" * 60)
 
-# =====================================================================
-# PHẦN 2: CÁC TÙY CHỌN XỬ LÝ VISITOR_COUNT (Tích hợp Logic Vận Hành)
-# =====================================================================
+# # =====================================================================
+# # PHẦN 2: CÁC TÙY CHỌN XỬ LÝ VISITOR_COUNT (Tích hợp Logic Vận Hành)
+# # =====================================================================
 
-# --- BƯỚC 2.1: ÉP LOGIC VẬN HÀNH THỰC TẾ (Đóng cửa & Khung giờ hoạt động) ---
+# # --- BƯỚC 2.1: ÉP LOGIC VẬN HÀNH THỰC TẾ (Đóng cửa & Khung giờ hoạt động) ---
 
-# 1. Khởi tạo mặt nạ (mask) kiểm tra giờ mở cửa mặc định: chỉ có thể có khách từ 10h trở đi
-# (Nếu giờ < 10, chắc chắn chưa mở cửa đón khách vào attraction)
-valid_hours_mask = (df['hour'] >= 10)
+# # 1. Khởi tạo mặt nạ (mask) kiểm tra giờ mở cửa mặc định: chỉ có thể có khách từ 10h trở đi
+# # (Nếu giờ < 10, chắc chắn chưa mở cửa đón khách vào attraction)
+# valid_hours_mask = (df['hour'] >= 10)
 
-# 2. Áp dụng điều kiện đóng cửa động theo loại ngày (type_frequentation)
-# - Ngày BF: chỉ có khách từ 10h đến 19h (giờ kết thúc là 19, tức là khách ra hết lúc 19h)
-valid_hours_mask = np.where(df['type_frequentation'] == 'BF', valid_hours_mask & (df['hour'] <= 19), valid_hours_mask)
+# # 2. Áp dụng điều kiện đóng cửa động theo loại ngày (type_frequentation)
+# # - Ngày BF: chỉ có khách từ 10h đến 19h (giờ kết thúc là 19, tức là khách ra hết lúc 19h)
+# valid_hours_mask = np.where(df['type_frequentation'] == 'BF', valid_hours_mask & (df['hour'] <= 19), valid_hours_mask)
 
-# - Ngày MF: chỉ có khách từ 10h đến 20h
-valid_hours_mask = np.where(df['type_frequentation'] == 'MF', valid_hours_mask & (df['hour'] <= 20), valid_hours_mask)
+# # - Ngày MF: chỉ có khách từ 10h đến 20h
+# valid_hours_mask = np.where(df['type_frequentation'] == 'MF', valid_hours_mask & (df['hour'] <= 20), valid_hours_mask)
 
-# - Ngày HF hoặc THF: chỉ có khách từ 10h đến 21h
-valid_hours_mask = np.where(df['type_frequentation'].isin(['HF', 'THF']), valid_hours_mask & (df['hour'] <= 21), valid_hours_mask)
+# # - Ngày HF hoặc THF: chỉ có khách từ 10h đến 21h
+# valid_hours_mask = np.where(df['type_frequentation'].isin(['HF', 'THF']), valid_hours_mask & (df['hour'] <= 21), valid_hours_mask)
 
-# 3. Kết hợp với điều kiện công viên mở cửa (is_open == 1)
-# Hợp lệ = Công viên phải MỞ CỬA VÀ nằm trong KHUNG GIỜ HOẠT ĐỘNG của ngày đó
-logic_valide = (df['is_open'] == 1) & valid_hours_mask
+# # 3. Kết hợp với điều kiện công viên mở cửa (is_open == 1)
+# # Hợp lệ = Công viên phải MỞ CỬA VÀ nằm trong KHUNG GIỜ HOẠT ĐỘNG của ngày đó
+# logic_valide = (df['is_open'] == 1) & valid_hours_mask
 
-# 4. Thống kê số dòng bị lỗi logic (Có khách khi đáng lẽ phải bằng 0)
-visitor_logic_faults = ((df['visitor_count'] > 0) & (~logic_valide)).sum()
+# # 4. Thống kê số dòng bị lỗi logic (Có khách khi đáng lẽ phải bằng 0)
+# visitor_logic_faults = ((df['visitor_count'] > 0) & (~logic_valide)).sum()
 
-print(f"[VISITOR_COUNT] Kiểm tra Logic Vận Hành:")
-print(f"  - Số dòng có khách sai khung giờ hoặc sai ngày mở cửa: {visitor_logic_faults} dòng ({visitor_logic_faults/total_rows*100:.2f}%)")
-print(f"  => Tiến hành ép về 0 khách cho các dòng sai logic này.")
+# print(f"[VISITOR_COUNT] Kiểm tra Logic Vận Hành:")
+# print(f"  - Số dòng có khách sai khung giờ hoặc sai ngày mở cửa: {visitor_logic_faults} dòng ({visitor_logic_faults/total_rows*100:.2f}%)")
+# print(f"  => Tiến hành ép về 0 khách cho các dòng sai logic này.")
 
-# Thực hiện ép về 0 cho các dòng không hợp lệ
-df['visitor_count'] = np.where(logic_valide, df['visitor_count'], 0)
-print("-" * 40)
-
-
-# --- BƯỚC 2.2: LỰA CHỌN PHƯƠNG ÁN CHẶN TRẦN OUTLIER TOÁN HỌC (Bật 1 trong 3 cách) ---
-
-# --- PHƯƠNG ÁN A: Chỉ chặn bằng Logic vật lý (Sức chứa hàng chờ tối đa = 750) ---
-max_physical_capacity = 750
-v_outliers = (df['visitor_count'] > max_physical_capacity).sum()
-print(f"[VISITOR_COUNT] Đang bật: [PHƯƠNG ÁN A] (Chặn logic vật lý hàng chờ)")
-print(f"  - Ngưỡng trần vật lý cố định: {max_physical_capacity} khách")
-print(f"  => Số dòng vượt ngưỡng vật lý bị hạ trần: {v_outliers} dòng ({v_outliers/total_rows*100:.2f}%)")
-df['visitor_count'] = np.where(df['visitor_count'] > max_physical_capacity, max_physical_capacity, df['visitor_count'])
+# # Thực hiện ép về 0 cho các dòng không hợp lệ
+# df['visitor_count'] = np.where(logic_valide, df['visitor_count'], 0)
+# print("-" * 40)
 
 
-# --- PHƯƠNG ÁN B: Plafonnement IQR tiêu chuẩn 1.5x (Ngưỡng cắt = 265 khách) ---
-# upper_bound_v_15 = df['visitor_count'].quantile(0.75) + 1.5 * (df['visitor_count'].quantile(0.75) - df['visitor_count'].quantile(0.25))
-# v_outliers = (df['visitor_count'] > upper_bound_v_15).sum()
-# print(f"[VISITOR_COUNT] Đang bật: [PHƯƠNG ÁN B] (Plafonnement IQR 1.5x)")
-# print(f"  - Ngưỡng trần toán học: {upper_bound_v_15:.1f} khách")
-# print(f"  => Số dòng bị ép trần toán học: {v_outliers} dòng ({v_outliers/total_rows*100:.2f}%)")
-# df['visitor_count'] = np.where(df['visitor_count'] > upper_bound_v_15, upper_bound_v_15, df['visitor_count'])
+# # --- BƯỚC 2.2: LỰA CHỌN PHƯƠNG ÁN CHẶN TRẦN OUTLIER TOÁN HỌC (Bật 1 trong 3 cách) ---
+
+# # --- PHƯƠNG ÁN A: Chỉ chặn bằng Logic vật lý (Sức chứa hàng chờ tối đa = 750) ---
+# max_physical_capacity = 750
+# v_outliers = (df['visitor_count'] > max_physical_capacity).sum()
+# print(f"[VISITOR_COUNT] Đang bật: [PHƯƠNG ÁN A] (Chặn logic vật lý hàng chờ)")
+# print(f"  - Ngưỡng trần vật lý cố định: {max_physical_capacity} khách")
+# print(f"  => Số dòng vượt ngưỡng vật lý bị hạ trần: {v_outliers} dòng ({v_outliers/total_rows*100:.2f}%)")
+# df['visitor_count'] = np.where(df['visitor_count'] > max_physical_capacity, max_physical_capacity, df['visitor_count'])
 
 
-# --- PHƯƠNG ÁN C: Dung hòa - Plafonnement IQR nới rộng 3.0x (Ngưỡng cắt = 424 khách) ---
-# upper_bound_v_30 = df['visitor_count'].quantile(0.75) + 3.0 * (df['visitor_count'].quantile(0.75) - df['visitor_count'].quantile(0.25))
-# v_outliers = (df['visitor_count'] > upper_bound_v_30).sum()
-# print(f"[VISITOR_COUNT] Đang bật: [PHƯƠNG ÁN C] (Plafonnement IQR 3.0x)")
-# print(f"  - Ngưỡng trần dung hòa: {upper_bound_v_30:.1f} khách")
-# print(f"  => Số dòng bị ép trần dung hòa: {v_outliers} dòng ({v_outliers/total_rows*100:.2f}%)")
-# df['visitor_count'] = np.where(df['visitor_count'] > upper_bound_v_30, upper_bound_v_30, df['visitor_count'])
+# # --- PHƯƠNG ÁN B: Plafonnement IQR tiêu chuẩn 1.5x (Ngưỡng cắt = 265 khách) ---
+# # upper_bound_v_15 = df['visitor_count'].quantile(0.75) + 1.5 * (df['visitor_count'].quantile(0.75) - df['visitor_count'].quantile(0.25))
+# # v_outliers = (df['visitor_count'] > upper_bound_v_15).sum()
+# # print(f"[VISITOR_COUNT] Đang bật: [PHƯƠNG ÁN B] (Plafonnement IQR 1.5x)")
+# # print(f"  - Ngưỡng trần toán học: {upper_bound_v_15:.1f} khách")
+# # print(f"  => Số dòng bị ép trần toán học: {v_outliers} dòng ({v_outliers/total_rows*100:.2f}%)")
+# # df['visitor_count'] = np.where(df['visitor_count'] > upper_bound_v_15, upper_bound_v_15, df['visitor_count'])
 
 
-# Đảm bảo lượng khách không bị âm (Chặn sàn dưới an toàn rộng)
-df['visitor_count'] = np.maximum(0, df['visitor_count'])
+# # --- PHƯƠNG ÁN C: Dung hòa - Plafonnement IQR nới rộng 3.0x (Ngưỡng cắt = 424 khách) ---
+# # upper_bound_v_30 = df['visitor_count'].quantile(0.75) + 3.0 * (df['visitor_count'].quantile(0.75) - df['visitor_count'].quantile(0.25))
+# # v_outliers = (df['visitor_count'] > upper_bound_v_30).sum()
+# # print(f"[VISITOR_COUNT] Đang bật: [PHƯƠNG ÁN C] (Plafonnement IQR 3.0x)")
+# # print(f"  - Ngưỡng trần dung hòa: {upper_bound_v_30:.1f} khách")
+# # print(f"  => Số dòng bị ép trần dung hòa: {v_outliers} dòng ({v_outliers/total_rows*100:.2f}%)")
+# # df['visitor_count'] = np.where(df['visitor_count'] > upper_bound_v_30, upper_bound_v_30, df['visitor_count'])
+
+
+# # Đảm bảo lượng khách không bị âm (Chặn sàn dưới an toàn rộng)
+# df['visitor_count'] = np.maximum(0, df['visitor_count'])
 
 print("="*60)
 

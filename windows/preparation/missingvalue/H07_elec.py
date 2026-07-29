@@ -6,7 +6,7 @@ import numpy as np
 # ==============================================================================
 # Đường dẫn file của bạn
 master_path = r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master\master_H07_elec.csv"
-horaire_path = r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\cadence\horaire2025_final_fr.csv"  # Đổi lại đường dẫn tuyệt đối nếu cần
+horaire_path = r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\cadence\horaire_all_years.csv"  # Đổi lại đường dẫn tuyệt đối nếu cần
 
 df_master = pd.read_csv(master_path)
 df_horaire = pd.read_csv(horaire_path)
@@ -57,27 +57,28 @@ df_master = df_master.drop(columns=['date_only', 'h_ouv_parsed', 'h_ferm_parsed'
 df_master['hour'] = df_master['date'].dt.hour
 
 # --- VARIABLE 1 : LE FLUX DE VISITEURS (visitor_count) ---
-# Cas 1 : Journées de fermeture complète du parc (is_open == 0)
-cond_parc_ferme = (df_master['is_open'] == 0)
+# # Cas 1 : Journées de fermeture complète du parc (is_open == 0)
+# cond_parc_ferme = (df_master['is_open'] == 0)
 
-# Cas 2 : En dehors des horaires d'ouverture réels du parc
-cond_hors_amplitude = (df_master['is_open'] == 1) & (
-    (df_master['hour'] < df_master['h_ouv_h07']) | (df_master['hour'] >= df_master['h_ferm_h07'])
-)
+# # Cas 2 : En dehors des horaires d'ouverture réels du parc
+# cond_hors_amplitude = (df_master['is_open'] == 1) & (
+#     (df_master['hour'] < df_master['h_ouv_h07']) | (df_master['hour'] >= df_master['h_ferm_h07'])
+# )
 
-# Forçage à 0 visiteur pour les périodes d'inactivité de l'attraction
-df_master.loc[cond_parc_ferme | cond_hors_amplitude, 'visitor_count'] = df_master.loc[cond_parc_ferme | cond_hors_amplitude, 'visitor_count'].fillna(0)
+# # Forçage à 0 visiteur pour les périodes d'inactivité de l'attraction
+# df_master.loc[cond_parc_ferme | cond_hors_amplitude, 'visitor_count'] = df_master.loc[cond_parc_ferme | cond_hors_amplitude, 'visitor_count'].fillna(0)
 
-# Cas 3 : Interpolation linéaire pour les NaN restants (pendant l'ouverture)
-df_master['visitor_count'] = df_master['visitor_count'].interpolate(method='linear')
-df_master['visitor_count'] = df_master['visitor_count'].clip(lower=0).round().astype(int)
+# # Cas 3 : Interpolation linéaire pour les NaN restants (pendant l'ouverture)
+# df_master['visitor_count'] = df_master['visitor_count'].interpolate(method='linear')
+# df_master['visitor_count'] = df_master['visitor_count'].clip(lower=0).round().astype(int)
 
 
 # --- VARIABLE 2 : DONNÉES MÉTÉOROLOGIQUES ---
 colonnes_meteo = [
     'temperature', 'humidite', 'rayonnement_solaire', 
     'temp_max', 'temp_min', 'temp_moy', 
-    'humidite_max', 'humidite_min', 'humidite_moy'
+    'humidite_max', 'humidite_min', 'humidite_moy',
+    'day_degree_cold', 'day_degree_hot',
 ]
 for col in colonnes_meteo:
     if col in df_master.columns:
@@ -119,6 +120,7 @@ ordre_colonnes = [
     'temperature', 'temp_max', 'temp_min', 'temp_moy',
     'humidite','humidite_max', 'humidite_min', 'humidite_moy',
     'rayonnement_solaire',
+    'day_degree_cold', 'day_degree_hot',
     'hour', 'min', 'day', 'month', 'year', 'week'
 ]
 
@@ -129,5 +131,5 @@ df_master_clean = df_master[colonnes_finales]
 output_clean_path = r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master_missing\master_H07_elec_missing.csv"
 df_master_clean.to_csv(output_clean_path, index=False)
 
-print(f"Master File nettoyé avec succès ! Lignes : {len(df_master_clean)} (Attendu : 8760)")
+print(f"Master File nettoyé avec succès ! Lignes : {len(df_master_clean)}")
 print(f"Nombre de colonnes finales : {len(df_master_clean.columns)}")

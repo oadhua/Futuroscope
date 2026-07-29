@@ -35,7 +35,6 @@ variables_exclues = [
     "min",
     "year",
     "day",
-    # "hour",
     "week",
     "annee_mois",
     "heure_sin",
@@ -45,6 +44,10 @@ variables_exclues = [
     "hour_x_freq_HF",
     "hour_x_freq_MF",
     "temp_decalage_1h",
+    "temp_decalage_2h",
+    "temp_decalage_3h",
+    "temp_roll_mean_3h",
+    "temp_roll_mean_6h"
 ]
 variables_entree = [col for col in donnees.columns if col not in variables_exclues]
 
@@ -52,27 +55,25 @@ X = donnees[variables_entree]
 y = donnees[variable_cible]
 
 # ==========================================================
-# 3. Blocked Split par mois (80% Train / 20% Test par mois)
+# 3. Séparation Train / Test par Chronologie (Train: <= 2025, Test: >= 2026)
 # ==========================================================
-train_indices = []
-test_indices = []
+# Tập Train: Từ 2022 đến hết ngày 31/12/2025
+mask_train = donnees["date"].dt.year <= 2025
 
-for name, group in donnees.groupby("annee_mois"):
-    if len(group) < 10:
-        continue
+# Tập Test: Từ 01/01/2026 trở đi
+mask_test = donnees["date"].dt.year >= 2026
 
-    split_idx = int(len(group) * 0.8)
+# Phân chia dữ liệu Train
+X_train = X.loc[mask_train].reset_index(drop=True)
+y_train = y.loc[mask_train].reset_index(drop=True)
 
-    train_indices.extend(group.index[:split_idx])
-    test_indices.extend(group.index[split_idx:])
+# Phân chia dữ liệu Test
+X_test = X.loc[mask_test].reset_index(drop=True)
+y_test_reel = y.loc[mask_test].reset_index(drop=True)
+dates_test = donnees["date"].loc[mask_test].reset_index(drop=True)
 
-# Création des ensembles Train/Test globaux
-X_train = X.loc[train_indices].reset_index(drop=True)
-y_train = y.loc[train_indices].reset_index(drop=True)
-
-X_test = X.loc[test_indices].reset_index(drop=True)
-y_test_reel = y.loc[test_indices].reset_index(drop=True)
-dates_test = donnees["date"].loc[test_indices].reset_index(drop=True)
+# Bỏ cột tạm annee_mois nếu không dùng
+donnees.drop(columns=["annee_mois"], inplace=True, errors="ignore")
 
 # ==========================================================
 # 4. Entraînement du modèle Random Forest (Multi-output)
