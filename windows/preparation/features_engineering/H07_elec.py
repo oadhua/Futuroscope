@@ -45,7 +45,7 @@ def generer_dataset_pure_regression(df_base):
     return df.dropna(subset=['temp_decalage_3h']).reset_index(drop=True)
 
 if __name__ == "__main__":
-    df_raw = pd.read_csv(r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master_outliers\master_H07_elec_outliers.csv")
+    df_raw = pd.read_csv(r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master_outliers\H07_elec_outliers.csv")
     df_commun = preparer_features_communes(df_raw)
     
     # Tạo tập dữ liệu hồi quy thuần túy không chứa biến lag điện

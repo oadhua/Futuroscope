@@ -84,9 +84,13 @@ for year in years:
                 df_transposed["Annee"] = df_transposed["Date"].dt.year
                 df_transposed["is_weekend"] = df_transposed["Date"].dt.dayofweek.isin([5, 6]).astype(int)
                 
-                if "H.  Ouv." in df_transposed.columns and "H. Ferm" in df_transposed.columns:
-                    has_ouv = df_transposed["H.  Ouv."].notna() & (df_transposed["H.  Ouv."].astype(str).str.strip() != "")
-                    has_ferm = df_transposed["H. Ferm"].notna() & (df_transposed["H. Ferm"].astype(str).str.strip() != "")
+                # Tìm cột H. Ouv. bất kể khoảng trắng thừa
+                ouv_col = [c for c in df_transposed.columns if 'ouv' in str(c).lower()]
+                ferm_col = [c for c in df_transposed.columns if 'ferm' in str(c).lower()]
+
+                if ouv_col and ferm_col:
+                    has_ouv = df_transposed[ouv_col[0]].notna() & (df_transposed[ouv_col[0]].astype(str).str.strip() != "")
+                    has_ferm = df_transposed[ferm_col[0]].notna() & (df_transposed[ferm_col[0]].astype(str).str.strip() != "")
                     df_transposed["is_open"] = (has_ouv & has_ferm).astype(int)
                 else:
                     df_transposed["is_open"] = 0
@@ -112,18 +116,28 @@ if all_years_dfs:
             0, 1
         ).astype(int)
 
+    # CHỈNH SỬA CHÍNH: Chuyển Date sang chuẩn ISO YYYY-MM-DD để đồng bộ với các file khác
     if "Date" in final_df.columns:
-        final_df["Date"] = pd.to_datetime(final_df["Date"]).dt.strftime('%m/%d/%Y')
+        final_df["Date"] = pd.to_datetime(final_df["Date"]).dt.strftime('%Y-%m-%d')
+
+    # Tìm lại chính xác tên cột H. Ouv. và H. Ferm trong final_df
+    col_map = {}
+    for col in final_df.columns:
+        if 'ouv' in str(col).lower():
+            col_map[col] = "H_Ouv"
+        elif 'ferm' in str(col).lower():
+            col_map[col] = "H_Ferm"
+    final_df = final_df.rename(columns=col_map)
 
     ordered_cols = [
         "Mois_Nom", "Date", "JF", "Nom_Jour", "Jour", "Mois", "Annee", "is_weekend", "is_open",
-        "H.  Ouv.", "H. Ferm", "Fréquentation", "Type Fréquentation"
+        "H_Ouv", "H_Ferm", "Fréquentation", "Type Fréquentation"
     ]
     final_cols = [col for col in ordered_cols if col in final_df.columns]
     final_df = final_df[final_cols]
     final_df.columns = [remove_accents_and_special_chars(col) for col in final_df.columns]
     
-    # Xuất ra 1 file CSV duy nhất chứa toàn bộ các năm
+    # Xuất ra file CSV duy nhất
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, "horaire_all_years.csv")
     final_df.to_csv(output_path, index=False, encoding='utf-8-sig')

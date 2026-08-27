@@ -1,151 +1,256 @@
-import pandas as pd
+import os
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-# 1. Đọc dữ liệu gốc
-df = pd.read_csv(r'D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master_missing\master_H03_thermal_missing.csv')
+# =====================================================================
+# 0. CẤU HÌNH ĐƯỜNG DẪN DỮ LIỆU DÀNH CHO H03 THERMAL
+# =====================================================================
+INPUT_PATH = r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master_missing\H03_thermal_missing.csv"
+OUTPUT_DIR = r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master_outliers"
+OUTPUT_PATH = os.path.join(OUTPUT_DIR, "H03_thermal_outliers.csv")
+
+if not os.path.exists(INPUT_PATH):
+    raise FileNotFoundError(f"Không tìm thấy file đầu vào: {INPUT_PATH}")
+
+df = pd.read_csv(INPUT_PATH)
 total_rows = len(df)
 
-print("="*60)
-print("BÁO CÁO THỐNG KÊ XỬ LÝ OUTLIERS THEO TỪNG PHƯƠNG ÁN")
-print("="*60)
+if "datetime" in df.columns:
+    df["datetime_dt"] = pd.to_datetime(df["datetime"])
+else:
+    df["datetime_dt"] = pd.to_datetime(df["date"].astype(str) + " " + df["hour"].astype(str) + ":00:00")
+
+df["month"] = df["datetime_dt"].dt.month
+df["day"] = df["datetime_dt"].dt.day
+
+print("=" * 70)
+print("BÁO CÁO TỔNG HỢP XỬ LÝ OUTLIERS & MÙA SƯỞI (H03 THERMAL - ĐA TẦNG BÙ DỰ PHÒNG)")
+print("=" * 70)
+
 
 # =====================================================================
-# PHẦN 1: CÁC TÙY CHỌN XỬ LÝ EC_VALUE (Bật 1 trong 3 cách)
+# PHẦN 1: KHÔI PHỤC LỖI CẢM BIẾN & TÁI TẠO XU HƯỚNG NHIỆT (H03 THERMAL)
 # =====================================================================
+TARGET_COL = "ec_value"
 
-# --- CÁCH 1.1: IQR phẳng toàn năm (Cách cũ) ---
-# q1_ec = df['ec_value'].quantile(0.25)
-# q3_ec = df['ec_value'].quantile(0.75)
-# iqr_ec = q3_ec - q1_ec
-# upper_bound_ec = q3_ec + 5.0 * iqr_ec
-# lower_bound_ec = max(0, q1_ec - 5.0 * iqr_ec)
-# ec_outliers_upper = (df['ec_value'] > upper_bound_ec).sum()
-# ec_outliers_lower = (df['ec_value'] < lower_bound_ec).sum()
-# total_ec_outliers = ec_outliers_upper + ec_outliers_lower
-# print(f"[EC_VALUE] Đang bật: [CÁCH 1.1] IQR phẳng toàn năm")
-# print(f"  - Ngưỡng trần cố định: {upper_bound_ec:.4f} kWh")
-# print(f"  - Số dòng vượt trần: {ec_outliers_upper} dòng ({ec_outliers_upper/total_rows*100:.2f}%)")
-# print(f"  - Số dòng dưới sàn: {ec_outliers_lower} dòng ({ec_outliers_lower/total_rows*100:.2f}%)")
-# print(f"  => Tổng số dòng bị thay thế: {total_ec_outliers} dòng ({total_ec_outliers/total_rows*100:.2f}%)")
-# df['ec_value'] = np.where(df['ec_value'] > upper_bound_ec, upper_bound_ec, np.where(df['ec_value'] < lower_bound_ec, lower_bound_ec, df['ec_value']))
+if TARGET_COL not in df.columns:
+    raise KeyError(f"Không tìm thấy cột '{TARGET_COL}' trong file H03_thermal_missing.csv!")
 
+print(f"\n[PHẦN 1] XỬ LÝ OUTLIERS & IMPUTE ANOMALIES CHO [{TARGET_COL}]...")
 
-# --- CÁCH 1.2: IQR biến động theo từng THÁNG (Giữ xu hướng mùa vụ) ---
-df['ec_value_clean'] = df['ec_value'].copy()
-total_ec_outliers = 0
+# 1. Phân lập Mùa Sưởi & Mùa Tắt Sưởi
+mask_summer = (
+    (df["month"] > 5) & (df["month"] < 10)
+) | (
+    (df["month"] == 5) & (df["day"] >= 15)
+) | (
+    (df["month"] == 10) & (df["day"] <= 15)
+)
+mask_winter = ~mask_summer
 
-# Tạo mảng lưu thông tin chi tiết từng tháng nếu cần kiểm tra sâu
-for month in sorted(df['month'].unique()):
-    mask = df['month'] == month
-    month_data = df.loc[mask, 'ec_value']
+# 2. Phát hiện Flatline lỗi
+def detect_flatlines(series, mask_winter_series, min_duration=4):
+    diff = series.diff().ne(0)
+    run_id = diff.cumsum()
+    run_lengths = series.groupby(run_id).transform("count")
     
-    q1 = month_data.quantile(0.25)
-    q3 = month_data.quantile(0.75)
-    iqr = q3 - q1
-    up = q3 + 1.5 * iqr
-    low = max(0, q1 - 1.5 * iqr)
-    
-    # Tính toán số lượng outlier của riêng tháng này
-    month_outliers = ((month_data > up) | (month_data < low)).sum()
-    total_ec_outliers += month_outliers
-    
-    # Ép trần/sàn động cho tháng đó
-    df.loc[mask, 'ec_value_clean'] = np.where(
-        df.loc[mask, 'ec_value'] > up, up, 
-        np.where(df.loc[mask, 'ec_value'] < low, low, df.loc[mask, 'ec_value'])
-    )
+    flat_positive = (run_lengths >= min_duration) & (series > 0)
+    flat_zero_winter = (run_lengths >= min_duration) & (series == 0) & mask_winter_series
+    return flat_positive | flat_zero_winter
 
-print(f"[EC_VALUE] Đang bật: [CÁCH 1.2] IQR biến động theo từng THÁNG")
-print(f"  => Tổng số dòng ec_value bị thay thế (cộng dồn 12 tháng): {total_ec_outliers} dòng ({total_ec_outliers/total_rows*100:.2f}%)")
-df['ec_value'] = df['ec_value_clean']
-df.drop(columns=['ec_value_clean'], inplace=True)
+mask_negative = df[TARGET_COL] < 0.0
+mask_flatline = detect_flatlines(df[TARGET_COL], mask_winter, min_duration=4)
 
+MAX_THERMAL_CAPACITY_H03 = 325.0
 
-# --- CÁCH 1.3: Hampel Filter / Trung vị trượt 24h (Bảo toàn chuỗi thời gian tối ưu) ---
-# window_size = 24
-# rolling_median = df['ec_value'].rolling(window=window_size, center=True, min_periods=1).median()
-# rolling_mad = (df['ec_value'] - rolling_median).abs().rolling(window=window_size, center=True, min_periods=1).median()
-# upper_hampel = rolling_median + 3 * rolling_mad
-# lower_hampel = np.maximum(0, rolling_median - 3 * rolling_mad)
-# total_ec_outliers = ((df['ec_value'] > upper_hampel) | (df['ec_value'] < lower_hampel)).sum()
-# print(f"[EC_VALUE] Đang bật: [CÁCH 1.3] Hampel Filter (Rolling Median 24h)")
-# print(f"  => Tổng số dòng ec_value bị thay thế (lệch khỏi xu hướng ngày): {total_ec_outliers} dòng ({total_ec_outliers/total_rows*100:.2f}%)")
-# df['ec_value'] = np.where(df['ec_value'] > upper_hampel, rolling_median, np.where(df['ec_value'] < lower_hampel, rolling_median, df['ec_value']))
+group_cols = ["type_frequentation", "is_open", "hour"]
+valid_group_cols = [c for c in group_cols if c in df.columns]
 
-print("-" * 60)
+if valid_group_cols:
+    grp_q1 = df.groupby(valid_group_cols)[TARGET_COL].transform(lambda x: x.quantile(0.25))
+    grp_q3 = df.groupby(valid_group_cols)[TARGET_COL].transform(lambda x: x.quantile(0.75))
+    grp_iqr = grp_q3 - grp_q1
+    dynamic_upper = np.maximum(grp_q3 + 8.0 * grp_iqr, MAX_THERMAL_CAPACITY_H03)
+    mask_profile_outlier = (df[TARGET_COL] > dynamic_upper) & mask_winter
+else:
+    mask_profile_outlier = (df[TARGET_COL] > MAX_THERMAL_CAPACITY_H03) & mask_winter
 
-# # =====================================================================
-# # PHẦN 2: CÁC TÙY CHỌN XỬ LÝ VISITOR_COUNT (Tích hợp Logic Vận Hành)
-# # =====================================================================
+mask_summer_noise = mask_summer & (df[TARGET_COL] > 0.5)
 
-# # --- BƯỚC 2.1: ÉP LOGIC VẬN HÀNH THỰC TẾ (Đóng cửa & Khung giờ hoạt động) ---
+mask_anomaly = mask_negative | mask_flatline | mask_profile_outlier | mask_summer_noise
+total_anomalies = mask_anomaly.sum()
 
-# # 1. Khởi tạo mặt nạ (mask) kiểm tra giờ mở cửa mặc định: chỉ có thể có khách từ 10h trở đi
-# # (Nếu giờ < 10, chắc chắn chưa mở cửa đón khách vào attraction)
-# valid_hours_mask = (df['hour'] >= 10)
+print(f"  -> Phát hiện {total_anomalies} điểm lỗi thực sự ({total_anomalies/total_rows*100:.2f}% tổng dữ liệu).")
 
-# # 2. Áp dụng điều kiện đóng cửa động theo loại ngày (type_frequentation)
-# # - Ngày BF: chỉ có khách từ 10h đến 19h (giờ kết thúc là 19, tức là khách ra hết lúc 19h)
-# valid_hours_mask = np.where(df['type_frequentation'] == 'BF', valid_hours_mask & (df['hour'] <= 19), valid_hours_mask)
+# 3. THỰC HIỆN TÁI TẠO XU HƯỚNG BẰNG THUẬT TOÁN ĐA TẦNG (MULTI-TIER IMPUTATION)
+df.loc[mask_anomaly, TARGET_COL] = np.nan
 
-# # - Ngày MF: chỉ có khách từ 10h đến 20h
-# valid_hours_mask = np.where(df['type_frequentation'] == 'MF', valid_hours_mask & (df['hour'] <= 20), valid_hours_mask)
+# Tầng 1: Mùa hè mặc định ép về 0.0
+df.loc[mask_summer & df[TARGET_COL].isna(), TARGET_COL] = 0.0
 
-# # - Ngày HF hoặc THF: chỉ có khách từ 10h đến 21h
-# valid_hours_mask = np.where(df['type_frequentation'].isin(['HF', 'THF']), valid_hours_mask & (df['hour'] <= 21), valid_hours_mask)
+# Tầng 2: Điền Mùa Lạnh theo Profile Chi Tiết [month, type_frequentation, is_open, hour] bằng MEAN()
+profile_keys = ["month", "type_frequentation", "is_open", "hour"]
+valid_profile_keys = [k for k in profile_keys if k in df.columns]
 
-# # 3. Kết hợp với điều kiện công viên mở cửa (is_open == 1)
-# # Hợp lệ = Công viên phải MỞ CỬA VÀ nằm trong KHUNG GIỜ HOẠT ĐỘNG của ngày đó
-# logic_valide = (df['is_open'] == 1) & valid_hours_mask
+if valid_profile_keys:
+    mean_profile_l1 = df[mask_winter].groupby(valid_profile_keys)[TARGET_COL].transform("mean")
+    df[TARGET_COL] = df[TARGET_COL].fillna(mean_profile_l1)
 
-# # 4. Thống kê số dòng bị lỗi logic (Có khách khi đáng lẽ phải bằng 0)
-# visitor_logic_faults = ((df['visitor_count'] > 0) & (~logic_valide)).sum()
+# Tầng 3: Dự phòng Cấp 1 theo Profile Rộng Hơn [is_open, hour]
+backup_keys_l2 = [k for k in ["is_open", "hour"] if k in df.columns]
+if backup_keys_l2 and df[TARGET_COL].isna().sum() > 0:
+    mean_profile_l2 = df[mask_winter].groupby(backup_keys_l2)[TARGET_COL].transform("mean")
+    df[TARGET_COL] = df[TARGET_COL].fillna(mean_profile_l2)
 
-# print(f"[VISITOR_COUNT] Kiểm tra Logic Vận Hành:")
-# print(f"  - Số dòng có khách sai khung giờ hoặc sai ngày mở cửa: {visitor_logic_faults} dòng ({visitor_logic_faults/total_rows*100:.2f}%)")
-# print(f"  => Tiến hành ép về 0 khách cho các dòng sai logic này.")
+# Tầng 4: Dự phòng Cấp 2 theo Khung Giờ [hour]
+if "hour" in df.columns and df[TARGET_COL].isna().sum() > 0:
+    mean_profile_l3 = df[mask_winter].groupby("hour")[TARGET_COL].transform("mean")
+    df[TARGET_COL] = df[TARGET_COL].fillna(mean_profile_l3)
 
-# # Thực hiện ép về 0 cho các dòng không hợp lệ
-# df['visitor_count'] = np.where(logic_valide, df['visitor_count'], 0)
-# print("-" * 40)
+# Tầng 5: Nội suy thời gian làm mượt nhẹ hai chiều
+s_temp = df.set_index("datetime_dt")[TARGET_COL]
+s_temp = s_temp.interpolate(method="time", limit_direction="both")
+df[TARGET_COL] = s_temp.values
 
+# Tầng 6: Vét cạn bằng Mean toàn hệ thống nếu còn thiếu ở đầu/cuối chuỗi
+if df[TARGET_COL].isna().sum() > 0:
+    df[TARGET_COL] = df[TARGET_COL].fillna(df[TARGET_COL].mean())
 
-# # --- BƯỚC 2.2: LỰA CHỌN PHƯƠNG ÁN CHẶN TRẦN OUTLIER TOÁN HỌC (Bật 1 trong 3 cách) ---
+df[TARGET_COL] = df[TARGET_COL].clip(lower=0.0)
 
-# # --- PHƯƠNG ÁN A: Chỉ chặn bằng Logic vật lý (Sức chứa hàng chờ tối đa = 750) ---
-# max_physical_capacity = 750
-# v_outliers = (df['visitor_count'] > max_physical_capacity).sum()
-# print(f"[VISITOR_COUNT] Đang bật: [PHƯƠNG ÁN A] (Chặn logic vật lý hàng chờ)")
-# print(f"  - Ngưỡng trần vật lý cố định: {max_physical_capacity} khách")
-# print(f"  => Số dòng vượt ngưỡng vật lý bị hạ trần: {v_outliers} dòng ({v_outliers/total_rows*100:.2f}%)")
-# df['visitor_count'] = np.where(df['visitor_count'] > max_physical_capacity, max_physical_capacity, df['visitor_count'])
+print(f"  -> Số lượng NaN ec_value còn lại sau xử lý: {df[TARGET_COL].isna().sum()} ô.")
+print("  ✅ Đã tái tạo xong dữ liệu nhiệt năng H03!")
 
-
-# # --- PHƯƠNG ÁN B: Plafonnement IQR tiêu chuẩn 1.5x (Ngưỡng cắt = 265 khách) ---
-# # upper_bound_v_15 = df['visitor_count'].quantile(0.75) + 1.5 * (df['visitor_count'].quantile(0.75) - df['visitor_count'].quantile(0.25))
-# # v_outliers = (df['visitor_count'] > upper_bound_v_15).sum()
-# # print(f"[VISITOR_COUNT] Đang bật: [PHƯƠNG ÁN B] (Plafonnement IQR 1.5x)")
-# # print(f"  - Ngưỡng trần toán học: {upper_bound_v_15:.1f} khách")
-# # print(f"  => Số dòng bị ép trần toán học: {v_outliers} dòng ({v_outliers/total_rows*100:.2f}%)")
-# # df['visitor_count'] = np.where(df['visitor_count'] > upper_bound_v_15, upper_bound_v_15, df['visitor_count'])
-
-
-# # --- PHƯƠNG ÁN C: Dung hòa - Plafonnement IQR nới rộng 3.0x (Ngưỡng cắt = 424 khách) ---
-# # upper_bound_v_30 = df['visitor_count'].quantile(0.75) + 3.0 * (df['visitor_count'].quantile(0.75) - df['visitor_count'].quantile(0.25))
-# # v_outliers = (df['visitor_count'] > upper_bound_v_30).sum()
-# # print(f"[VISITOR_COUNT] Đang bật: [PHƯƠNG ÁN C] (Plafonnement IQR 3.0x)")
-# # print(f"  - Ngưỡng trần dung hòa: {upper_bound_v_30:.1f} khách")
-# # print(f"  => Số dòng bị ép trần dung hòa: {v_outliers} dòng ({v_outliers/total_rows*100:.2f}%)")
-# # df['visitor_count'] = np.where(df['visitor_count'] > upper_bound_v_30, upper_bound_v_30, df['visitor_count'])
-
-
-# # Đảm bảo lượng khách không bị âm (Chặn sàn dưới an toàn rộng)
-# df['visitor_count'] = np.maximum(0, df['visitor_count'])
-
-print("="*60)
 
 # =====================================================================
-# PHẦN 3: XUẤT FILE KẾT QUẢ ĐỂ ĐỐI CHỨNG
+# PHẦN 2: XỬ LÝ OUTLIERS CHO VISITOR_COUNT H03 (GIỚI HẠN <= 10/02/2024)
 # =====================================================================
-df.to_csv(r'D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master_outliers\master_H03_thermal_outliers.csv', index=False)
-print("\nĐã xử lý xong và xuất file dữ liệu thành công!")
+cutoff_date = pd.to_datetime("2024-02-10")
+date_mask = df["datetime_dt"].dt.floor("D") <= cutoff_date
+total_target_rows = date_mask.sum()
+
+ouvert_signal = df.get("ouvert", 0) > 0
+operation_signal = df.get("operation", 0) > 0
+has_any_operation = ouvert_signal | operation_signal
+
+mask_pure_closed = (df["is_open"] == 0) & (~has_any_operation)
+
+mask_logic_error = date_mask & (df["visitor_count"] > 0) & mask_pure_closed
+outliers_logic = mask_logic_error.sum()
+df.loc[date_mask & mask_pure_closed, "visitor_count"] = 0
+
+max_physical_capacity = 750
+mask_capacity_error = date_mask & (df["visitor_count"] > max_physical_capacity)
+outliers_capacity = mask_capacity_error.sum()
+
+df.loc[date_mask, "visitor_count"] = np.where(
+    df.loc[date_mask, "visitor_count"] > max_physical_capacity,
+    max_physical_capacity,
+    df.loc[date_mask, "visitor_count"],
+)
+df.loc[date_mask, "visitor_count"] = np.maximum(0, df.loc[date_mask, "visitor_count"])
+
+df.drop(columns=["datetime_dt"], inplace=True, errors="ignore")
+
+
+# =====================================================================
+# PHẦN 3: XUẤT FILE KẾT QUẢ FOR H03 THERMAL
+# =====================================================================
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+df.to_csv(OUTPUT_PATH, index=False, encoding="utf-8-sig")
+print(f"\n✅ Đã xuất file H03 Thermal thành công tại:\n -> {OUTPUT_PATH}")
+
+
+# =====================================================================
+# PHẦN 4: VẼ BIỂU ĐỒ TƯƠNG TÁC PLOTLY
+# =====================================================================
+df_raw = pd.read_csv(INPUT_PATH)
+df_clean = pd.read_csv(OUTPUT_PATH)
+
+df_raw["datetime"] = pd.to_datetime(df_raw["date"].astype(str) + " " + df_raw["hour"].astype(str) + ":00:00")
+df_clean["datetime"] = pd.to_datetime(df_clean["date"].astype(str) + " " + df_clean["hour"].astype(str) + ":00:00")
+
+fig = make_subplots(
+    rows=2,
+    cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.08,
+    subplot_titles=(
+        "1. Tiêu Thụ Nhiệt (ec_value - H03 Thermal)",
+        "2. Lượt Khách Visitor Count (Lọc <= 10/02/2024)",
+    ),
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=df_raw["datetime"],
+        y=df_raw[TARGET_COL],
+        name=f"Raw {TARGET_COL}",
+        line=dict(color="crimson", width=1),
+        opacity=0.35,
+    ),
+    row=1,
+    col=1,
+)
+fig.add_trace(
+    go.Scatter(
+        x=df_clean["datetime"],
+        y=df_clean[TARGET_COL],
+        name=f"Clean {TARGET_COL}",
+        line=dict(color="royalblue", width=1.5),
+    ),
+    row=1,
+    col=1,
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=df_raw["datetime"],
+        y=df_raw["visitor_count"],
+        name="Raw Visitor",
+        line=dict(color="mediumpurple", width=1),
+        opacity=0.35,
+    ),
+    row=2,
+    col=1,
+)
+fig.add_trace(
+    go.Scatter(
+        x=df_clean["datetime"],
+        y=df_clean["visitor_count"],
+        name="Clean Visitor",
+        line=dict(color="midnightblue", width=1.5),
+    ),
+    row=2,
+    col=1,
+)
+
+fig.add_vline(
+    x=pd.to_datetime("2024-02-10").timestamp() * 1000,
+    line_width=2,
+    line_dash="dash",
+    line_color="red",
+    annotation_text="Cutoff (10/02/2024)",
+    annotation_position="top left",
+    row=2,
+    col=1,
+)
+
+fig.update_layout(
+    height=650,
+    title_text="<b>ĐỐI CHỨNG DỮ LIỆU CẢM BIẾN NHIỆT EC_VALUE & LƯỢT KHÁCH (H03 THERMAL)</b>",
+    hovermode="x unified",
+    template="plotly_white",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+)
+
+fig.update_xaxes(rangeslider_visible=True, row=2, col=1)
+
+html_output_path = os.path.join(OUTPUT_DIR, "H03_thermal_outliers_interactive.html")
+fig.write_html(html_output_path)
+print(f"✅ Đã tạo xong biểu đồ HTML tương tác H03 Thermal tại:\n -> {html_output_path}")
+
+fig.show()

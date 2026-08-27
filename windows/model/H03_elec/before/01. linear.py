@@ -1,195 +1,236 @@
 import os
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
-from sklearn.multioutput import MultiOutputRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-# ==========================================================
-# 1. Chargement des données (Fichier Elec global)
-# ==========================================================
-file_path = r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master_ml\master_H03_predict_pure_elec.csv"
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-if not os.path.exists(file_path):
-    raise FileNotFoundError(f"Impossible de trouver le fichier : {file_path}")
+# ---------------------------------------------------------
+# 1. CHARGEMENT DES DONNÉES ET CONFIGURATION DES FEATURES
+# ---------------------------------------------------------
+df = pd.read_csv(
+    r"D:\Stage SI\Machine Learning\Futuroscope\windows\donne_clean\master_ml\master_H03_predict_pure_elec.csv"
+)
 
-donnees = pd.read_csv(file_path)
-donnees["date"] = pd.to_datetime(donnees["date"])
-donnees = donnees.sort_values("date").reset_index(drop=True)
+if "date" in df.columns:
+    df["date"] = pd.to_datetime(df["date"])
 
-# Groupe mensuel pour le Blocked Split
-donnees["annee_mois"] = donnees["date"].dt.to_period("M")
-
-# ==========================================================
-# 2. Sélection des variables (Selon le modèle global)
-# ==========================================================
-# Variables cibles multiples (Multi-output)
-variable_cible = ["elec_1", "elec_2"]
-
-# Exclusion des variables de fuite (leak) et temporelles brutes
-variables_exclues = [
-    "date",
-    "elec_1",
-    "elec_2",
-    "min",
+# Features d'entrée pour chaque cible
+features_elec_1 = [
     "year",
+    "month",
     "day",
+    "hour",
     "week",
-    "annee_mois",
-    "heure_sin",
-    "heure_cos",
-    "mois_sin",
-    "mois_cos",
-    "hour_x_freq_HF",
-    "hour_x_freq_MF",
-    "temp_decalage_1h",
-    "temp_decalage_2h",
-    "temp_decalage_3h",
-    "temp_roll_mean_3h",
-    "temp_roll_mean_6h"
+    "is_weekend",
+    "is_open",
+    "jf",
+    "frequentation_park_daily",
+    "surface",
+    "duree",
+    "ouvert",
+    "interrompu",
+    "operation",
+    "visitor_count",
+    "temperature",
+    "humidite",
+    "rayonnement_solaire",
+    "day_degree_cold",
+    "day_degree_hot",
+    "temp_max",
+    "temp_min",
+    "temp_moy",
+    "humidite_max",
+    "humidite_min",
+    "humidite_moy",
+    "freq_HF",
+    "freq_MF",
+    "freq_THF",
 ]
-variables_entree = [col for col in donnees.columns if col not in variables_exclues]
 
-X = donnees[variables_entree]
-y = donnees[variable_cible]
+features_elec_2 = [
+    "year",
+    "month",
+    "day",
+    "hour",
+    "week",
+    "is_weekend",
+    "is_open",
+    "jf",
+    "frequentation_park_daily",
+    "surface",
+    "duree",
+    "ouvert",
+    "interrompu",
+    "operation",
+    "visitor_count",
+    "temperature",
+    "humidite",
+    "rayonnement_solaire",
+    "day_degree_cold",
+    "day_degree_hot",
+    "temp_max",
+    "temp_min",
+    "temp_moy",
+    "humidite_max",
+    "humidite_min",
+    "humidite_moy",
+    "freq_HF",
+    "freq_MF",
+    "freq_THF",
+]
 
-# ==========================================================
-# 3. Séparation Train / Test par Chronologie (Train: <= 2025, Test: >= 2026)
-# ==========================================================
-# Tập Train: Từ 2022 đến hết ngày 31/12/2025
-mask_train = donnees["date"].dt.year <= 2025
+# Séparation des jeux d'entraînement (< 2026) et de test (>= 2026)
+train_mask = df["year"] < 2026
+test_mask = df["year"] >= 2026
 
-# Tập Test: Từ 01/01/2026 trở đi
-mask_test = donnees["date"].dt.year >= 2026
+# Données pour elec_1
+X1_train = df.loc[train_mask, features_elec_1]
+X1_test = df.loc[test_mask, features_elec_1]
+Y1_train = df.loc[train_mask, "elec_1"]
+Y1_test = df.loc[test_mask, "elec_1"]
 
-# Phân chia dữ liệu Train
-X_train = X.loc[mask_train].reset_index(drop=True)
-y_train = y.loc[mask_train].reset_index(drop=True)
+# Données pour elec_2
+X2_train = df.loc[train_mask, features_elec_2]
+X2_test = df.loc[test_mask, features_elec_2]
+Y2_train = df.loc[train_mask, "elec_2"]
+Y2_test = df.loc[test_mask, "elec_2"]
 
-# Phân chia dữ liệu Test
-X_test = X.loc[mask_test].reset_index(drop=True)
-y_test_reel = y.loc[mask_test].reset_index(drop=True)
-dates_test = donnees["date"].loc[mask_test].reset_index(drop=True)
-
-# Bỏ cột tạm annee_mois nếu không dùng
-donnees.drop(columns=["annee_mois"], inplace=True, errors="ignore")
-
-# ==========================================================
-# 4. Entraînement du modèle MLR (Multi-output)
-# ==========================================================
-base_lr = LinearRegression()
-
-# Utilisation de MultiOutputRegressor pour prédire elec_1 et elec_2 simultanément
-modele = MultiOutputRegressor(base_lr)
-
-# Entraînement global
-modele.fit(X_train, y_train)
-
-# ==========================================================
-# 5. Prédictions et évaluation
-# ==========================================================
-predictions_train = modele.predict(X_train)
-predictions_reelles = modele.predict(X_test)
-
-# Seuil physique pour éviter les valeurs négatives
-predictions_reelles = np.clip(predictions_reelles, a_min=0, a_max=None)
-
-# Évaluation globale (Moyenne uniforme des deux colonnes)
-r2_train = r2_score(y_train, predictions_train, multioutput="uniform_average")
-mse_global = mean_squared_error(
-    y_test_reel, predictions_reelles, multioutput="uniform_average"
-)
-mae_global = mean_absolute_error(
-    y_test_reel, predictions_reelles, multioutput="uniform_average"
-)
-r2_global = r2_score(y_test_reel, predictions_reelles, multioutput="uniform_average")
-
-# Évaluation détaillée par compteur
-r2_chi_tiet = r2_score(y_test_reel, predictions_reelles, multioutput="raw_values")
-mae_chi_tiet = mean_absolute_error(
-    y_test_reel, predictions_reelles, multioutput="raw_values"
+test_dates = (
+    df.loc[test_mask, "date"] if "date" in df.columns else df.loc[test_mask].index
 )
 
-print("=== RÉSULTATS DU MODÈLE GLOBAL MLR - MULTI-OUTPUT ===")
-print(f"MLR Train R² (Moyenne): {r2_train:.4f}")
-print(f"MLR Test R²  (Moyenne): {r2_global:.4f} | MAE (Moyenne): {mae_global:.2f}")
-print("-" * 65)
-print(f" -> [elec_1] R² Test: {r2_chi_tiet[0]:.4f} | MAE: {mae_chi_tiet[0]:.2f}")
-print(f" -> [elec_2] R² Test: {r2_chi_tiet[1]:.4f} | MAE: {mae_chi_tiet[1]:.2f}")
-print("=====================================================\n")
+# ---------------------------------------------------------
+# 2. ENTRAÎNEMENT DES MODÈLES INDÉPENDANTS
+# ---------------------------------------------------------
+# Modèle 1: elec_1
+model_elec_1 = LinearRegression()
+model_elec_1.fit(X1_train, Y1_train)
+pred_elec_1 = model_elec_1.predict(X1_test)
 
-# ==========================================================
-# 6. Visualisation avec Plotly (Format HTML standardisé)
-# ==========================================================
-resultats = (
-    pd.DataFrame(
-        {
-            "Date": dates_test,
-            "elec_1_Reelle": y_test_reel["elec_1"],
-            "elec_1_Predite": predictions_reelles[:, 0],
-            "elec_2_Reelle": y_test_reel["elec_2"],
-            "elec_2_Predite": predictions_reelles[:, 1],
-        }
-    )
-    .sort_values("Date")
-    .reset_index(drop=True)
+# Modèle 2: elec_2
+model_elec_2 = LinearRegression()
+model_elec_2.fit(X2_train, Y2_train)
+pred_elec_2 = model_elec_2.predict(X2_test)
+
+
+# ---------------------------------------------------------
+# 3. ÉVALUATION DES PERFORMANCES ET IMPORTANCE DES FEATURES
+# ---------------------------------------------------------
+def get_metrics(y_true, y_pred):
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    mae = mean_absolute_error(y_true, y_pred)
+    r2 = r2_score(y_true, y_pred)
+    return rmse, mae, r2
+
+
+r1, m1, r2_1 = get_metrics(Y1_test, pred_elec_1)
+r2, m2, r2_2 = get_metrics(Y2_test, pred_elec_2)
+
+print("\n--- RÉSULTATS : MODÈLES DE RÉGRESSION LINÉAIRE INDÉPENDANTS ---")
+print(f"[elec_1] RMSE: {r1:.4f} kWh | MAE: {m1:.4f} kWh | R²: {r2_1:.4f}")
+print(f"[elec_2] RMSE: {r2:.4f} kWh | MAE: {m2:.4f} kWh | R²: {r2_2:.4f}")
+
+# Top features pour elec_1
+coef_df1 = pd.DataFrame(
+    {"Feature": features_elec_1, "Coefficient": model_elec_1.coef_}
+).sort_values(by="Coefficient", key=abs, ascending=False)
+print("\nTop 5 des caractéristiques les plus influentes pour [elec_1] :")
+print(coef_df1.head(5).to_string(index=False))
+
+# Top features pour elec_2
+coef_df2 = pd.DataFrame(
+    {"Feature": features_elec_2, "Coefficient": model_elec_2.coef_}
+).sort_values(by="Coefficient", key=abs, ascending=False)
+print("\nTop 5 des caractéristiques les plus influentes pour [elec_2] :")
+print(coef_df2.head(5).to_string(index=False))
+
+# ---------------------------------------------------------
+# 4. VISUALISATION INTERACTIVE AVEC PLOTLY
+# ---------------------------------------------------------
+# Sous-titres incluant les métriques d'évaluation (RMSE, MAE, R²)
+subtitle_1 = f"<b>elec_1 : Réel vs Régression</b><br><sup>RMSE: {r1:.2f} kWh | MAE: {m1:.2f} kWh | R²: {r2_1:.4f}</sup>"
+subtitle_2 = f"<b>elec_2 : Réel vs Régression</b><br><sup>RMSE: {r2:.2f} kWh | MAE: {m2:.2f} kWh | R²: {r2_2:.4f}</sup>"
+
+fig = make_subplots(
+    rows=2,
+    cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.12,
+    subplot_titles=(subtitle_1, subtitle_2),
 )
 
-dates_formattees = resultats["Date"].dt.strftime("%Y-%m-%d %H:%M:%S")
-
-fig = go.Figure()
-
-# --- ÉLECTRICITÉ 1 (Tons Bleus) ---
+# Graphique elec_1
 fig.add_trace(
     go.Scatter(
-        x=dates_formattees,
-        y=resultats["elec_1_Reelle"],
+        x=test_dates,
+        y=Y1_test,
         mode="lines",
-        name=f"elec_1 Réelle",
-        line=dict(color="darkblue"),
-    )
+        name="elec_1 Réel",
+        line=dict(color="#1f77b4", width=1.5),
+        hovertemplate="<b>Horodatage:</b> %{x}<br><b>Valeur réelle:</b> %{y:.2f} kWh<extra></extra>",
+    ),
+    row=1,
+    col=1,
 )
 fig.add_trace(
     go.Scatter(
-        x=dates_formattees,
-        y=resultats["elec_1_Predite"],
+        x=test_dates,
+        y=pred_elec_1,
         mode="lines",
-        name="elec_1 Prédite",
-        line=dict(color="dodgerblue", dash="dash"),
-    )
+        name="elec_1 Prédiction",
+        line=dict(color="#ff7f0e", width=1.5, dash="dot"),
+        customdata=np.stack((Y1_test, np.abs(Y1_test - pred_elec_1)), axis=-1),
+        hovertemplate="<b>Horodatage:</b> %{x}<br><b>Prédiction:</b> %{y:.2f} kWh<br><b>Écart:</b> %{customdata[1]:.2f} kWh<extra></extra>",
+    ),
+    row=1,
+    col=1,
 )
 
-# --- ÉLECTRICITÉ 2 (Tons Rouges/Oranges) ---
+# Graphique elec_2
 fig.add_trace(
     go.Scatter(
-        x=dates_formattees,
-        y=resultats["elec_2_Reelle"],
+        x=test_dates,
+        y=Y2_test,
         mode="lines",
-        name=f"elec_2 Réelle",
-        line=dict(color="darkred"),
-    )
+        name="elec_2 Réel",
+        line=dict(color="#2ca02c", width=1.5),
+        hovertemplate="<b>Horodatage:</b> %{x}<br><b>Valeur réelle:</b> %{y:.2f} kWh<extra></extra>",
+    ),
+    row=2,
+    col=1,
 )
 fig.add_trace(
     go.Scatter(
-        x=dates_formattees,
-        y=resultats["elec_2_Predite"],
+        x=test_dates,
+        y=pred_elec_2,
         mode="lines",
-        name="elec_2 Prédite",
-        line=dict(color="orange", dash="dash"),
-    )
+        name="elec_2 Prédiction",
+        line=dict(color="#d62728", width=1.5, dash="dot"),
+        customdata=np.stack((Y2_test, np.abs(Y2_test - pred_elec_2)), axis=-1),
+        hovertemplate="<b>Horodatage:</b> %{x}<br><b>Prédiction:</b> %{y:.2f} kWh<br><b>Écart:</b> %{customdata[1]:.2f} kWh<extra></extra>",
+    ),
+    row=2,
+    col=1,
 )
 
-titre_graphe = f"Prévisions Globales (elec_1 & elec_2) via MLR | elec_1_R²: {r2_chi_tiet[0]:.4f} - MAE: {mae_chi_tiet[0]:.2f} | elec_2_R²: {r2_chi_tiet[1]:.4f} - MAE: {mae_chi_tiet[1]:.2f}"
 fig.update_layout(
-    title=titre_graphe,
-    xaxis_title="Date",
-    yaxis_title="Consommation Électrique (kWh)",
+    height=800,
+    title_text="<b>PRÉVISION AVEC LINEARREGRESSION (TEST 2026)</b>",
+    title_x=0.5,
     hovermode="x unified",
-    xaxis=dict(rangeslider=dict(visible=True), type="date"),
+    template="plotly_white",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
 )
 
-# Sauvegarde automatique du fichier HTML
-fig.write_html("prévisions_linear_elec.html")
+fig.update_yaxes(title_text="Consommation (kWh)", row=1, col=1)
+fig.update_yaxes(title_text="Consommation (kWh)", row=2, col=1)
+fig.update_xaxes(rangeslider_visible=True, row=2, col=1)
+
+output_html = "01. linear.html"
+fig.write_html(output_html, include_plotlyjs="cdn")
+print(f"\n[OK] Graphique interactif exporté avec succès : {os.path.abspath(output_html)}")
 
 fig.show()

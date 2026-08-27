@@ -24,8 +24,8 @@ url = "https://archive-api.open-meteo.com/v1/archive"
 params = {
     "latitude": 46.6692,
     "longitude": 0.3686,
-    "start_date": "2022-07-20",
-    "end_date": "2026-07-26",
+    "start_date": "2021-12-31",
+    "end_date": "2026-07-31",
     "hourly": ["temperature_2m", "relative_humidity_2m", "shortwave_radiation"],
 }
 
