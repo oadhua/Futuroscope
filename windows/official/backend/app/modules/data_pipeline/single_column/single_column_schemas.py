@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union, Dict, Any
 from pydantic import BaseModel, Field
 
 # ==============================================================================
@@ -71,5 +71,12 @@ class GraphiquesColonne(BaseModel):
 class ReponseColonneDetail(BaseModel):
     nom_colonne: str = Field(..., example="visitor_count")
     id_attraction: str = Field(..., example="H03")
+    selected_version: str = Field(default="v0_raw", example="v1_visitor_domain_rules_H03")  # Bổ sung
     statistiques: StatistiquesColonne
     graphiques: GraphiquesColonne
+    
+class ReponseMultiVersionDetail(BaseModel):
+    nom_colonne: str = Field(..., example="visitor_count")
+    id_attraction: str = Field(..., example="H03")
+    # Dictionary chứa kết quả chi tiết ứng với từng version_id (VD: {"v0_raw": {...}, "v1_mean_H03": {...}})
+    versions_data: Dict[str, Union[ReponseColonneDetail, Dict[str, Any]]] = Field(default={})

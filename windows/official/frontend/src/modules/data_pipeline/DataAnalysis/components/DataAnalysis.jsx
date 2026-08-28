@@ -9,7 +9,14 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Legend
 } from 'recharts';
 
-const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#64748B'];
+const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#64748b'];
+
+// Hàm tự động tạo màu phân bố đều theo không gian HSL cho vô số version (đồng bộ với SingleColumn)
+const getDynamicColor = (index, total) => {
+    if (total <= 1) return '#059669';
+    const hue = Math.round((index * 360) / total);
+    return `hsl(${hue}, 70%, 45%)`;
+};
 
 export default function DataAnalysis() {
     // Mode d'affichage: 'single' (Analyse simple) ou 'compare' (Comparaison)
@@ -35,7 +42,7 @@ export default function DataAnalysis() {
     // Onglets et filtres
     const [activeTab, setActiveTab] = useState('overview');
 
-    // Mặc định showAll = true để hiển thị toàn bộ trước
+    // Affichage complet ou réduit des graphiques
     const [showAllPie, setShowAllPie] = useState(true);
     const [showAllBar, setShowAllBar] = useState(true);
 
@@ -46,10 +53,10 @@ export default function DataAnalysis() {
     const [currentPage, setCurrentPage] = useState(1);
     const [rowsPerPage, setRowsPerPage] = useState(10);
 
-    // Ref để lưu AbortController nhằm hủy request cũ khi người dùng thao tác nhanh
+    // Ref pour annuler les requêtes précédentes en cas de clics rapides
     const abortControllerRef = useRef(null);
 
-    // 1. Lọc danh sách phiên bản phù hợp với attraction đang chọn
+    // 1. Filtrer la liste des versions selon l'attraction sélectionnée
     const filteredVersionList = useMemo(() => {
         if (!selectedAttraction || selectedAttraction === 'ALL') {
             return allVersions;
@@ -61,7 +68,7 @@ export default function DataAnalysis() {
         });
     }, [allVersions, selectedAttraction]);
 
-    // Xử lý khi thay đổi Attraction
+    // Gestion du changement d'attraction
     const handleAttractionChange = (newAttr) => {
         setSelectedAttraction(newAttr);
 
@@ -195,23 +202,23 @@ export default function DataAnalysis() {
         };
     }, [viewMode, selectedVersion, selectedAttraction, v1Version, v2Version]);
 
-    // Dữ liệu cho Donut Chart khi chọn ALL
+    // Données pour le Donut Chart quand "ALL" est sélectionné
     const donutAttractionData = useMemo(() => {
         if (!data) return [];
         return data.repartition_par_attraction || [];
     }, [data]);
 
-    // Lọc hiển thị Show All trước, Top 8 sau cho PieChart Mémoire
+    // Données filtrées pour le diagramme d'utilisation mémoire
     const rawMemoire = useMemo(() => data?.utilisation_memoire || [], [data]);
     const memoireData = useMemo(() => showAllPie ? rawMemoire : rawMemoire.slice(0, 8), [rawMemoire, showAllPie]);
 
-    // Lọc hiển thị Show All trước, Top 10 sau cho BarChart Anomalies
+    // Données filtrées pour le diagramme d'anomalies
     const rawComparaison = useMemo(() => data?.comparaison_colonnes || [], [data]);
     const comparaisonData = useMemo(() => showAllBar ? rawComparaison : rawComparaison.slice(0, 10), [rawComparaison, showAllBar]);
 
     const statistiquesColonnes = data?.comparaison_colonnes || [];
 
-    // Recherche et Tri
+    // Recherche et Tri du tableau
     const processedTableData = useMemo(() => {
         if (!data || !data.apercu_donnees) return [];
         let rows = [...data.apercu_donnees];
@@ -261,9 +268,10 @@ export default function DataAnalysis() {
         wrapper: { minHeight: '100vh', backgroundColor: '#f8fafc', padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' },
         container: { maxWidth: '1280px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' },
         card: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)', boxSizing: 'border-box' },
-        headerCard: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)', flexWrap: 'wrap' },
+        headerCard: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' },
+        topBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' },
         selectBox: { display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '8px 14px', borderRadius: '16px', fontSize: '12px', minWidth: '180px' },
-        select: { border: 'none', background: 'transparent', fontWeight: 'bold', color: '#0f172a', outline: 'none', cursor: 'pointer', appearance: 'none', width: '100%' },
+        select: { border: 'none', background: 'transparent', fontWeight: 'bold', color: '#0f172a', outline: 'none', cursor: 'pointer', appearance: 'none', width: '100%', lineHeight: '1' },
         kpiGrid: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '12px 16px', display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' },
         kpiItem: { display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 4px', minWidth: 0 },
         iconBg: (bg, color) => ({ backgroundColor: bg, color: color, padding: '10px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }),
@@ -300,74 +308,197 @@ export default function DataAnalysis() {
         <div style={styles.wrapper}>
             <div style={styles.container}>
 
-                {/* HEADER & FILTRES */}
+                {/* EN-TÊTE & FILTRES */}
                 <div style={styles.headerCard}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                        <div style={styles.iconBg('#eff6ff', '#2563eb')}>
-                            <BarChart3 size={24} />
-                        </div>
-                        <div>
-                            {/* TIÊU ĐỀ ĐÃ ĐƯỢC ĐỔI THÀNH ĐƠN GIẢN */}
-                            <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
-                                Analyse des données
-                            </h1>
-                            <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#94a3b8', fontWeight: '600' }}>
-                                Profilage et comparaison des données du schéma data_prep
-                            </p>
-                        </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                        <div style={{ display: 'flex', backgroundColor: '#f1f5f9', padding: '4px', borderRadius: '14px', gap: '4px' }}>
-                            <button onClick={() => setViewMode('single')} style={styles.modeToggleBtn(viewMode === 'single')}>
-                                <Activity size={14} /> Vue Simple
-                            </button>
-                            <button onClick={() => setViewMode('compare')} style={styles.modeToggleBtn(viewMode === 'compare')}>
-                                <GitCompare size={14} /> Comparaison
-                            </button>
+                    <div style={styles.topBar}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            <div style={styles.iconBg('#eff6ff', '#2563eb')}>
+                                <BarChart3 size={24} />
+                            </div>
+                            <div>
+                                <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', lineHeight: '1.2' }}>
+                                    Analyse des données
+                                </h1>
+                                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94a3b8', fontWeight: '600', lineHeight: '1.2' }}>
+                                    Profilage et comparaison des données du schéma data_prep
+                                </p>
+                            </div>
                         </div>
 
-                        {/* Filtre Attraction */}
-                        <div style={styles.selectBox}>
-                            <Filter size={14} color="#94a3b8" />
-                            <span style={{ color: '#64748b', fontWeight: '600' }}>Attraction :</span>
-                            <select value={selectedAttraction} onChange={(e) => handleAttractionChange(e.target.value)} style={styles.select}>
-                                <option value="ALL">Toutes les attractions</option>
-                                {attractionList.map((id) => (
-                                    <option key={id} value={id}>Attraction {id}</option>
-                                ))}
-                            </select>
-                            <ChevronDown size={14} color="#94a3b8" />
-                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', backgroundColor: '#f1f5f9', padding: '4px', borderRadius: '14px', gap: '4px' }}>
+                                <button onClick={() => setViewMode('single')} style={styles.modeToggleBtn(viewMode === 'single')}>
+                                    <Activity size={14} /> Vue Simple
+                                </button>
+                                <button onClick={() => setViewMode('compare')} style={styles.modeToggleBtn(viewMode === 'compare')}>
+                                    <GitCompare size={14} /> Comparaison
+                                </button>
+                            </div>
 
-                        {/* Sélecteurs de versions */}
-                        {viewMode === 'single' ? (
+                            {/* Filtre Attraction */}
                             <div style={styles.selectBox}>
-                                <Layers size={14} color="#94a3b8" />
-                                <span style={{ color: '#64748b', fontWeight: '600' }}>Version :</span>
-                                <select value={selectedVersion} onChange={(e) => setSelectedVersion(e.target.value)} style={styles.select}>
-                                    {filteredVersionList.map((v) => (
-                                        <option key={v} value={v}>{v}</option>
+                                <Filter size={14} color="#94a3b8" />
+                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Attraction :</span>
+                                <select value={selectedAttraction} onChange={(e) => handleAttractionChange(e.target.value)} style={styles.select}>
+                                    <option value="ALL">Toutes les attractions</option>
+                                    {attractionList.map((id) => (
+                                        <option key={id} value={id}>Attraction {id}</option>
                                     ))}
                                 </select>
                                 <ChevronDown size={14} color="#94a3b8" />
                             </div>
-                        ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <div style={styles.selectBox}>
-                                    <select value={v1Version} onChange={(e) => setV1Version(e.target.value)} style={styles.select}>
-                                        {filteredVersionList.map((v) => (
-                                            <option key={v} value={v}>V1: {v}</option>
-                                        ))}
-                                    </select>
+                        </div>
+                    </div>
+
+                    {/* STEPPER VERSIONS (Intégration dynamique des couleurs avec getDynamicColor) */}
+                    <div style={{
+                        backgroundColor: '#ffffff',
+                        borderRadius: '16px',
+                        border: '1px solid #e2e8f0',
+                        padding: '20px 24px',
+                        width: '100%',
+                        boxSizing: 'border-box'
+                    }}>
+                        {viewMode === 'single' ? (
+                            <div>
+                                <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
+                                    Choisissez la version des données
                                 </div>
-                                <ArrowRight size={14} color="#94a3b8" />
-                                <div style={styles.selectBox}>
-                                    <select value={v2Version} onChange={(e) => setV2Version(e.target.value)} style={styles.select}>
-                                        {filteredVersionList.map((v) => (
-                                            <option key={v} value={v}>V2: {v}</option>
-                                        ))}
-                                    </select>
+                                <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                                    {filteredVersionList.map((ver, index) => {
+                                        const isSelected = selectedVersion === ver;
+                                        const isLast = index === filteredVersionList.length - 1;
+                                        const totalVer = filteredVersionList.length;
+                                        const dynamicColor = getDynamicColor(index, totalVer);
+
+                                        return (
+                                            <React.Fragment key={ver}>
+                                                <div
+                                                    onClick={() => setSelectedVersion(ver)}
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '8px',
+                                                        cursor: 'pointer',
+                                                        userSelect: 'none',
+                                                        flexShrink: 0
+                                                    }}
+                                                >
+                                                    <div style={{
+                                                        width: '28px',
+                                                        height: '28px',
+                                                        borderRadius: '50%',
+                                                        backgroundColor: isSelected ? dynamicColor : '#94a3b8',
+                                                        color: '#ffffff',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        fontSize: '12px',
+                                                        fontWeight: '700',
+                                                        transition: 'all 0.2s ease',
+                                                        boxShadow: isSelected ? `0 0 0 4px ${dynamicColor}25` : 'none',
+                                                        flexShrink: 0
+                                                    }}>
+                                                        {index + 1}
+                                                    </div>
+                                                    <span style={{
+                                                        fontSize: '13px',
+                                                        fontWeight: isSelected ? '700' : '500',
+                                                        color: isSelected ? '#1e293b' : '#64748b',
+                                                        whiteSpace: 'nowrap'
+                                                    }}>
+                                                        {ver}
+                                                    </span>
+                                                </div>
+
+                                                {!isLast && (
+                                                    <div style={{
+                                                        flex: 1,
+                                                        height: '1px',
+                                                        backgroundColor: '#e2e8f0',
+                                                        margin: '0 12px',
+                                                        minWidth: '16px'
+                                                    }} />
+                                                )}
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                                <div>
+                                    <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
+                                        Choisissez la version initiale (V1)
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                                        {filteredVersionList.map((ver, index) => {
+                                            const isSelected = v1Version === ver;
+                                            const isLast = index === filteredVersionList.length - 1;
+                                            const totalVer = filteredVersionList.length;
+                                            const dynamicColor = getDynamicColor(index, totalVer);
+
+                                            return (
+                                                <React.Fragment key={`v1-${ver}`}>
+                                                    <div
+                                                        onClick={() => setV1Version(ver)}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}
+                                                    >
+                                                        <div style={{
+                                                            width: '28px', height: '28px', borderRadius: '50%',
+                                                            backgroundColor: isSelected ? dynamicColor : '#94a3b8',
+                                                            color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            fontSize: '12px', fontWeight: '700', flexShrink: 0,
+                                                            boxShadow: isSelected ? `0 0 0 4px ${dynamicColor}25` : 'none'
+                                                        }}>
+                                                            {index + 1}
+                                                        </div>
+                                                        <span style={{ fontSize: '13px', fontWeight: isSelected ? '700' : '500', color: isSelected ? '#1e293b' : '#64748b', whiteSpace: 'nowrap' }}>
+                                                            {ver}
+                                                        </span>
+                                                    </div>
+                                                    {!isLast && <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0', margin: '0 12px', minWidth: '16px' }} />}
+                                                </React.Fragment>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
+                                        Choisissez la version mise à jour (V2)
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                                        {filteredVersionList.map((ver, index) => {
+                                            const isSelected = v2Version === ver;
+                                            const isLast = index === filteredVersionList.length - 1;
+                                            const totalVer = filteredVersionList.length;
+                                            const dynamicColor = getDynamicColor(index, totalVer);
+
+                                            return (
+                                                <React.Fragment key={`v2-${ver}`}>
+                                                    <div
+                                                        onClick={() => setV2Version(ver)}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}
+                                                    >
+                                                        <div style={{
+                                                            width: '28px', height: '28px', borderRadius: '50%',
+                                                            backgroundColor: isSelected ? dynamicColor : '#94a3b8',
+                                                            color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            fontSize: '12px', fontWeight: '700', flexShrink: 0,
+                                                            boxShadow: isSelected ? `0 0 0 4px ${dynamicColor}25` : 'none'
+                                                        }}>
+                                                            {index + 1}
+                                                        </div>
+                                                        <span style={{ fontSize: '13px', fontWeight: isSelected ? '700' : '500', color: isSelected ? '#1e293b' : '#64748b', whiteSpace: 'nowrap' }}>
+                                                            {ver}
+                                                        </span>
+                                                    </div>
+                                                    {!isLast && <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0', margin: '0 12px', minWidth: '16px' }} />}
+                                                </React.Fragment>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -387,17 +518,17 @@ export default function DataAnalysis() {
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '16px' }}>
                             <div style={{ ...styles.card, display: 'flex', alignItems: 'center', gap: '16px', padding: '16px 20px' }}>
                                 <div style={styles.iconBg('#eff6ff', '#2563eb')}><Database size={22} /></div>
-                                <div>
-                                    <div style={{ fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase' }}>Total Lignes</div>
-                                    <div style={{ fontSize: '20px', fontWeight: '800', color: '#0f172a' }}>{(data.total_lignes || 0).toLocaleString()}</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Total Lignes</div>
+                                    <div style={{ fontSize: '20px', fontWeight: '800', color: '#0f172a', lineHeight: '1.2', marginTop: '4px' }}>{(data.total_lignes || 0).toLocaleString()}</div>
                                 </div>
                             </div>
 
                             <div style={{ ...styles.card, display: 'flex', alignItems: 'center', gap: '16px', padding: '16px 20px' }}>
                                 <div style={styles.iconBg('#faf5ff', '#9333ea')}><Layers size={22} /></div>
-                                <div>
-                                    <div style={{ fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase' }}>Total Variables</div>
-                                    <div style={{ fontSize: '20px', fontWeight: '800', color: '#0f172a' }}>{(data.total_colonnes || 0).toLocaleString()}</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Total Variables</div>
+                                    <div style={{ fontSize: '20px', fontWeight: '800', color: '#0f172a', lineHeight: '1.2', marginTop: '4px' }}>{(data.total_colonnes || 0).toLocaleString()}</div>
                                 </div>
                             </div>
                         </div>
@@ -405,9 +536,9 @@ export default function DataAnalysis() {
                         <div style={styles.kpiGrid}>
                             <div style={styles.kpiItem}>
                                 <div style={styles.iconBg('#fffbeb', '#d97706')}><AlertTriangle size={18} /></div>
-                                <div>
-                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Manquantes</div>
-                                    <div style={{ fontSize: '14px', fontWeight: '800', color: '#d97706' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Manquantes</div>
+                                    <div style={{ fontSize: '14px', fontWeight: '800', color: '#d97706', lineHeight: '1.2', marginTop: '2px' }}>
                                         {(data.nb_valeurs_manquantes || 0).toLocaleString()} <span style={{ fontSize: '11px' }}>({data.pourcentage_manquants || 0}%)</span>
                                     </div>
                                 </div>
@@ -415,9 +546,9 @@ export default function DataAnalysis() {
 
                             <div style={styles.kpiItem}>
                                 <div style={styles.iconBg('#fef2f2', '#dc2626')}><Activity size={18} /></div>
-                                <div>
-                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Outliers</div>
-                                    <div style={{ fontSize: '14px', fontWeight: '800', color: '#dc2626' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Outliers</div>
+                                    <div style={{ fontSize: '14px', fontWeight: '800', color: '#dc2626', lineHeight: '1.2', marginTop: '2px' }}>
                                         {(data.nb_outliers || 0).toLocaleString()} <span style={{ fontSize: '11px' }}>({data.pourcentage_outliers || 0}%)</span>
                                     </div>
                                 </div>
@@ -425,9 +556,9 @@ export default function DataAnalysis() {
 
                             <div style={styles.kpiItem}>
                                 <div style={styles.iconBg('#fff1f2', '#e11d48')}><TrendingDown size={18} /></div>
-                                <div>
-                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Négatives</div>
-                                    <div style={{ fontSize: '14px', fontWeight: '800', color: '#e11d48' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Négatives</div>
+                                    <div style={{ fontSize: '14px', fontWeight: '800', color: '#e11d48', lineHeight: '1.2', marginTop: '2px' }}>
                                         {(data.nb_valeurs_negatives || 0).toLocaleString()} <span style={{ fontSize: '11px' }}>({data.pourcentage_negatifs || 0}%)</span>
                                     </div>
                                 </div>
@@ -435,22 +566,21 @@ export default function DataAnalysis() {
 
                             <div style={styles.kpiItem}>
                                 <div style={styles.iconBg('#faf5ff', '#9333ea')}><Copy size={18} /></div>
-                                <div>
-                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Doublons</div>
-                                    <div style={{ fontSize: '14px', fontWeight: '800', color: '#9333ea' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Doublons</div>
+                                    <div style={{ fontSize: '14px', fontWeight: '800', color: '#9333ea', lineHeight: '1.2', marginTop: '2px' }}>
                                         {(data.nb_doublons || 0).toLocaleString()} <span style={{ fontSize: '11px' }}>({data.pourcentage_dupliques || 0}%)</span>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        {/* GRAPHIQUES SECTION */}
+                        {/* SECTION GRAPHIQUES */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '20px' }}>
 
-                            {/* BIỂU ĐỒ 1: DYNAMIC BETWEEN DONUT (ALL) & BAR CHART (SPECIFIC ATTRACTION) */}
                             <div style={styles.card}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', alignItems: 'center' }}>
-                                    <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', lineHeight: '1.2' }}>
                                         <PieIcon size={18} color="#2563eb" />
                                         {selectedAttraction === 'ALL'
                                             ? `Répartition par Attraction (${selectedVersion})`
@@ -474,7 +604,7 @@ export default function DataAnalysis() {
                                                         paddingAngle={4}
                                                     >
                                                         {donutAttractionData.map((e, idx) => (
-                                                            <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                                                            <Cell key={idx} fill={getDynamicColor(idx, donutAttractionData.length)} />
                                                         ))}
                                                     </Pie>
                                                     <Tooltip formatter={(val, name) => [`${val}%`, `Attraction: ${name}`]} />
@@ -501,7 +631,7 @@ export default function DataAnalysis() {
                                                         paddingAngle={4}
                                                     >
                                                         {data.repartition_par_version.map((entry, idx) => (
-                                                            <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                                                            <Cell key={idx} fill={getDynamicColor(idx, data.repartition_par_version.length)} />
                                                         ))}
                                                     </Pie>
                                                     <Tooltip
@@ -523,10 +653,9 @@ export default function DataAnalysis() {
                                 </div>
                             </div>
 
-                            {/* DONUT CHART 2: Utilisation Mémoire par Colonne */}
                             <div style={styles.card}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', alignItems: 'center' }}>
-                                    <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold' }}>Utilisation Mémoire par Colonne</h2>
+                                    <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', lineHeight: '1.2' }}>Utilisation Mémoire par Colonne</h2>
                                     {rawMemoire.length > 8 && (
                                         <button onClick={() => setShowAllPie(!showAllPie)} style={styles.actionBtn}>
                                             {showAllPie ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -538,7 +667,7 @@ export default function DataAnalysis() {
                                     <ResponsiveContainer width="100%" height="100%">
                                         <PieChart>
                                             <Pie data={memoireData} dataKey="pourcentage" nameKey="nom_colonne" cx="50%" cy="50%" outerRadius={85} innerRadius={45} paddingAngle={3}>
-                                                {memoireData.map((e, idx) => <Cell key={idx} fill={COLORS[(idx + 2) % COLORS.length]} />)}
+                                                {memoireData.map((e, idx) => <Cell key={idx} fill={getDynamicColor(idx, memoireData.length)} />)}
                                             </Pie>
                                             <Tooltip formatter={(value, name) => [`${value}%`, `Colonne: ${name}`]} />
                                         </PieChart>
@@ -550,7 +679,7 @@ export default function DataAnalysis() {
                         {/* BAR CHART: Anomalies par Colonne */}
                         <div style={styles.card}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', alignItems: 'center' }}>
-                                <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold' }}>Anomalies par Colonne (Manquants & Outliers)</h2>
+                                <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', lineHeight: '1.2' }}>Anomalies par Colonne (Manquants & Outliers)</h2>
                                 {rawComparaison.length > 10 && (
                                     <button onClick={() => setShowAllBar(!showAllBar)} style={styles.actionBtn}>
                                         {showAllBar ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -621,11 +750,11 @@ export default function DataAnalysis() {
                         {activeTab === 'preview' && (
                             <div style={{ ...styles.card, display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold' }}>Aperçu des Données ({selectedVersion})</h2>
+                                    <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', lineHeight: '1.2' }}>Aperçu des Données ({selectedVersion})</h2>
                                     <div style={{ display: 'flex', gap: '12px' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '6px 12px', borderRadius: '12px', width: '200px' }}>
                                             <Search size={14} color="#94a3b8" />
-                                            <input type="text" placeholder="Rechercher..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }} style={{ border: 'none', background: 'transparent', outline: 'none', width: '100%', fontSize: '12px' }} />
+                                            <input type="text" placeholder="Rechercher..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }} style={{ border: 'none', background: 'transparent', outline: 'none', width: '100%', fontSize: '12px', lineHeight: '1' }} />
                                         </div>
                                     </div>
                                 </div>
@@ -655,7 +784,7 @@ export default function DataAnalysis() {
                                     </table>
                                 </div>
 
-                                {/* UI PHÂN TRANG (PAGINATION) */}
+                                {/* PAGINATION */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', fontSize: '12px', color: '#64748b' }}>
                                     <div>
                                         Affichage de {processedTableData.length === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1} à {Math.min(currentPage * rowsPerPage, processedTableData.length)} sur {processedTableData.length} lignes
@@ -664,13 +793,13 @@ export default function DataAnalysis() {
                                         <select
                                             value={rowsPerPage}
                                             onChange={(e) => { setRowsPerPage(Number(e.target.value)); setCurrentPage(1); }}
-                                            style={{ padding: '4px 8px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#ffffff', fontSize: '12px', color: '#475569' }}
+                                            style={{ padding: '4px 8px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#ffffff', fontSize: '12px', color: '#475569', lineHeight: '1' }}
                                         >
                                             <option value={10}>10 / page</option>
                                             <option value={25}>25 / page</option>
                                             <option value={50}>50 / page</option>
                                         </select>
-                                        <div style={{ display: 'flex', gap: '4px' }}>
+                                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                                             <button
                                                 onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                                                 disabled={currentPage === 1}
@@ -678,7 +807,7 @@ export default function DataAnalysis() {
                                             >
                                                 <ChevronLeft size={16} />
                                             </button>
-                                            <span style={{ padding: '6px 12px', fontWeight: 'bold', color: '#0f172a' }}>
+                                            <span style={{ padding: '6px 12px', fontWeight: 'bold', color: '#0f172a', lineHeight: '1' }}>
                                                 {currentPage} / {totalPages}
                                             </span>
                                             <button
@@ -700,13 +829,13 @@ export default function DataAnalysis() {
                 {viewMode === 'compare' && compareData && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                         <div style={styles.card}>
-                            <h2 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: 'bold' }}>
+                            <h2 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: 'bold', lineHeight: '1.2' }}>
                                 Évolution Globale ({compareData.v1_version_id} ➔ {compareData.v2_version_id})
                             </h2>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '16px' }}>
                                 <div style={{ padding: '16px', border: '1px solid #e2e8f0', borderRadius: '16px', backgroundColor: '#f8fafc' }}>
-                                    <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold' }}>VALEURS MANQUANTES</div>
-                                    <div style={{ fontSize: '18px', fontWeight: '800', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold', lineHeight: '1.2' }}>VALEURS MANQUANTES</div>
+                                    <div style={{ fontSize: '18px', fontWeight: '800', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', lineHeight: '1.2' }}>
                                         <span>{compareData.delta_global?.diff_nb_valeurs_manquantes ?? 0}</span>
                                         <span style={styles.badgeDelta(compareData.delta_global?.diff_nb_valeurs_manquantes ?? 0)}>
                                             {compareData.delta_global?.diff_pourcentage_manquants ?? 0}%
@@ -715,8 +844,8 @@ export default function DataAnalysis() {
                                 </div>
 
                                 <div style={{ padding: '16px', border: '1px solid #e2e8f0', borderRadius: '16px', backgroundColor: '#f8fafc' }}>
-                                    <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold' }}>VALEURS ABERRANTES (OUTLIERS)</div>
-                                    <div style={{ fontSize: '18px', fontWeight: '800', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold', lineHeight: '1.2' }}>VALEURS ABERRANTES (OUTLIERS)</div>
+                                    <div style={{ fontSize: '18px', fontWeight: '800', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', lineHeight: '1.2' }}>
                                         <span>{compareData.delta_global?.diff_nb_outliers ?? 0}</span>
                                         <span style={styles.badgeDelta(compareData.delta_global?.diff_nb_outliers ?? 0)}>
                                             {compareData.delta_global?.diff_pourcentage_outliers ?? 0}%
@@ -725,8 +854,8 @@ export default function DataAnalysis() {
                                 </div>
 
                                 <div style={{ padding: '16px', border: '1px solid #e2e8f0', borderRadius: '16px', backgroundColor: '#f8fafc' }}>
-                                    <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold' }}>VARIATION DES LIGNES</div>
-                                    <div style={{ fontSize: '18px', fontWeight: '800', marginTop: '4px' }}>
+                                    <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold', lineHeight: '1.2' }}>VARIATION DES LIGNES</div>
+                                    <div style={{ fontSize: '18px', fontWeight: '800', marginTop: '4px', lineHeight: '1.2' }}>
                                         {compareData.delta_global?.diff_total_lignes ?? 0}
                                     </div>
                                 </div>
@@ -734,7 +863,7 @@ export default function DataAnalysis() {
                         </div>
 
                         <div style={styles.card}>
-                            <h2 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: 'bold' }}>
+                            <h2 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: 'bold', lineHeight: '1.2' }}>
                                 Comparaison Détaillée des Variables
                             </h2>
                             <div style={{ overflowX: 'auto', borderRadius: '16px', border: '1px solid #e2e8f0' }}>

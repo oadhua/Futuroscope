@@ -1,9 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-    Database, AlertTriangle, Layers, Filter,
+    Database, AlertTriangle, Filter,
     ChevronDown, Table, CheckCircle2, UserCheck,
-    RefreshCw, Info, Sliders
+    Info, Sliders
 } from 'lucide-react';
+
+// Hàm tự động tạo màu phân bố đều theo không gian HSL cho vô số version (đồng bộ với DataAnalysis)
+const getDynamicColor = (index, total) => {
+    if (total <= 1) return '#059669';
+    const hue = Math.round((index * 360) / total);
+    return `hsl(${hue}, 70%, 45%)`;
+};
 
 // Từ điển định nghĩa mô tả và đơn vị bằng tiếng Pháp
 const COLUMN_METADATA_MAP = {
@@ -58,35 +65,16 @@ const COLUMN_METADATA_MAP = {
 export default function InitialProfiling() {
     // --- States ---
     const [data, setData] = useState(null);
-    const [versions, setVersions] = useState([]);
+    const [allVersions, setAllVersions] = useState([]);
     const [attractions, setAttractions] = useState([]);
-    const [selectedVersion, setSelectedVersion] = useState('v1');
+    const [selectedVersion, setSelectedVersion] = useState('v0_raw');
     const [selectedAttraction, setSelectedAttraction] = useState('ALL');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
     const API_BASE_URL = 'http://localhost:8000/initial-profiling';
 
-    // 1. Fetch danh sách Data Versions
-    useEffect(() => {
-        const fetchVersions = async () => {
-            try {
-                const res = await fetch(`${API_BASE_URL}/versions`);
-                if (res.ok) {
-                    const verData = await res.json();
-                    setVersions(verData);
-                    if (verData.length > 0) {
-                        setSelectedVersion(verData[0].version_id);
-                    }
-                }
-            } catch (err) {
-                console.warn("Lỗi lấy danh sách versions:", err);
-            }
-        };
-        fetchVersions();
-    }, []);
-
-    // 2. Fetch danh sách Attractions
+    // 1. Fetch danh sách Attractions
     useEffect(() => {
         const fetchAttractions = async () => {
             try {
@@ -102,7 +90,46 @@ export default function InitialProfiling() {
         fetchAttractions();
     }, []);
 
-    // 3. Fetch dữ liệu Initial Profiling
+    // 2. Fetch danh sách Versions theo attraction
+    useEffect(() => {
+        const fetchVersions = async () => {
+            try {
+                const query = selectedAttraction !== 'ALL' ? `?id_attraction=${selectedAttraction}` : '';
+                const res = await fetch(`${API_BASE_URL}/versions${query}`);
+                if (res.ok) {
+                    const verData = await res.json();
+                    setAllVersions(verData);
+                }
+            } catch (err) {
+                console.warn("Lỗi lấy danh sách versions:", err);
+            }
+        };
+        fetchVersions();
+    }, [selectedAttraction]);
+
+    // 3. Lọc Version ở Frontend theo Attraction
+    const filteredVersions = useMemo(() => {
+        if (!selectedAttraction || selectedAttraction === 'ALL') {
+            return allVersions;
+        }
+        const attrUpper = selectedAttraction.toUpperCase();
+        return allVersions.filter(v => {
+            const verId = v.version_id.toUpperCase();
+            return verId === 'V0_RAW' || verId === 'V1' || verId.includes(attrUpper);
+        });
+    }, [allVersions, selectedAttraction]);
+
+    // Tự động điều chỉnh Version nếu version hiện tại không còn hợp lệ
+    useEffect(() => {
+        if (filteredVersions.length > 0) {
+            const exists = filteredVersions.some(v => v.version_id === selectedVersion);
+            if (!exists) {
+                setSelectedVersion(filteredVersions[0].version_id);
+            }
+        }
+    }, [filteredVersions, selectedVersion]);
+
+    // 4. Fetch dữ liệu Initial Profiling
     const fetchProfilingData = async () => {
         setLoading(true);
         setError(null);
@@ -165,7 +192,7 @@ export default function InitialProfiling() {
         );
     };
 
-    // --- Đồng bộ 100% Hệ thống Unified Internal Styles từ SingleColumn ---
+    // Unified UI Styles (Micro-styling chuyên nghiệp chuẩn Data Analysis)
     const styles = {
         wrapper: { minHeight: '100vh', backgroundColor: '#f8fafc', padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' },
         container: { maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' },
@@ -254,7 +281,7 @@ export default function InitialProfiling() {
         <div style={styles.wrapper}>
             <div style={styles.container}>
 
-                {/* 1. TOP HEADER & FILTER CARD */}
+                {/* 1. TOP HEADER & ATTRACTION FILTER CARD */}
                 <div style={styles.headerCard}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: '1 1 auto', minWidth: 0 }}>
                         <div style={styles.iconBg('#eff6ff', '#2563eb')}>
@@ -268,29 +295,15 @@ export default function InitialProfiling() {
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-                        {/* Dropdown Version */}
-                        <div style={styles.selectBox}>
-                            <Layers size={15} color="#94a3b8" style={{ flexShrink: 0 }} />
-                            <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Version :</span>
-                            <select value={selectedVersion} onChange={(e) => setSelectedVersion(e.target.value)} style={styles.select}>
-                                {versions.length > 0 ? (
-                                    versions.map(v => (
-                                        <option key={v.version_id} value={v.version_id}>
-                                            {v.version_label} {v.is_updated ? '(Mis à jour)' : ''}
-                                        </option>
-                                    ))
-                                ) : (
-                                    <option value="v1">Version 1</option>
-                                )}
-                            </select>
-                            <ChevronDown size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
-                        </div>
-
-                        {/* Dropdown Attraction */}
+                        {/* Filter Attraction Dropdown */}
                         <div style={styles.selectBox}>
                             <Filter size={15} color="#94a3b8" style={{ flexShrink: 0 }} />
                             <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Attraction :</span>
-                            <select value={selectedAttraction} onChange={(e) => setSelectedAttraction(e.target.value)} style={styles.select}>
+                            <select
+                                value={selectedAttraction}
+                                onChange={(e) => setSelectedAttraction(e.target.value)}
+                                style={styles.select}
+                            >
                                 <option value="ALL">Toutes les attractions</option>
                                 {attractions.map(id => <option key={id} value={id}>Attraction {id}</option>)}
                             </select>
@@ -299,7 +312,78 @@ export default function InitialProfiling() {
                     </div>
                 </div>
 
-                {/* 2. KPI METRICS BAR */}
+                {/* 2. TIMELINE CHỌN VERSION DẠNG BADGE GIỐNG DATA ANALYSIS */}
+                <div style={{ ...styles.card, padding: '20px 24px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a', marginBottom: '16px' }}>
+                        Choisissez la version des données
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                        {filteredVersions.map((v, index) => {
+                            const isSelected = selectedVersion === v.version_id;
+                            const isLast = index === filteredVersions.length - 1;
+                            const totalVer = filteredVersions.length;
+                            const dynamicColor = getDynamicColor(index, totalVer);
+
+                            return (
+                                <React.Fragment key={v.version_id}>
+                                    <div
+                                        onClick={() => setSelectedVersion(v.version_id)}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            cursor: 'pointer',
+                                            userSelect: 'none',
+                                            flexShrink: 0
+                                        }}
+                                    >
+                                        {/* Vòng tròn số thứ tự với màu sắc HSL động */}
+                                        <div style={{
+                                            width: '28px',
+                                            height: '28px',
+                                            borderRadius: '50%',
+                                            backgroundColor: isSelected ? dynamicColor : '#94a3b8',
+                                            color: '#ffffff',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            fontSize: '12px',
+                                            fontWeight: '700',
+                                            transition: 'all 0.2s ease',
+                                            boxShadow: isSelected ? `0 0 0 4px ${dynamicColor}25` : 'none',
+                                            flexShrink: 0
+                                        }}>
+                                            {index + 1}
+                                        </div>
+
+                                        {/* Tên Version dạng Code Badge chuẩn Data Analysis */}
+                                        <span style={{
+                                            fontSize: '13px',
+                                            fontWeight: isSelected ? '700' : '500',
+                                            color: isSelected ? '#1e293b' : '#64748b',
+                                            whiteSpace: 'nowrap'
+                                        }}>
+                                            {v.version_id}
+                                        </span>
+                                    </div>
+
+                                    {/* Đường gạch nối giữa các bước */}
+                                    {!isLast && (
+                                        <div style={{
+                                            flex: 1,
+                                            height: '1px',
+                                            backgroundColor: '#e2e8f0',
+                                            margin: '0 12px',
+                                            minWidth: '16px'
+                                        }} />
+                                    )}
+                                </React.Fragment>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* 3. KPI METRICS BAR */}
                 <div style={styles.kpiGrid}>
                     <div style={styles.kpiItem}>
                         <div style={styles.iconBg('#eff6ff', '#2563eb')}><Table size={18} /></div>
@@ -332,7 +416,7 @@ export default function InitialProfiling() {
                     </div>
                 </div>
 
-                {/* 3. DATASET DESCRIPTION BANNER */}
+                {/* 4. DATASET DESCRIPTION BANNER */}
                 {data.dataset_description && (
                     <div style={{ ...styles.card, padding: '16px 20px', backgroundColor: '#f0f9ff', borderColor: '#bae6fd', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
                         <Info size={18} color="#0284c7" style={{ marginTop: '2px', flexShrink: 0 }} />
@@ -343,7 +427,7 @@ export default function InitialProfiling() {
                     </div>
                 )}
 
-                {/* 4. METADATA & SCHEMA TABLE */}
+                {/* 5. METADATA & SCHEMA TABLE */}
                 <div style={styles.card}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
                         <Sliders size={18} color="#2563eb" />

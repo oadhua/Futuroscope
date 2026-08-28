@@ -13,6 +13,7 @@ export default function DataPipelineLayout() {
         { path: 'multi-column', label: '5. Multi Column Analysis', desc: 'Analyse multi colonne' },
         { path: 'timeseries-analysis', label: '6. Time Series Analysis', desc: 'Analyse des series temporelles' },
         { path: 'missing-value', label: '7. Missing Value Imputation', desc: 'Impute des valeurs manquantes' },
+        { path: 'outliers', label: '7. Outliers Imputation', desc: 'Impute des valeurs abberantes' },
     ];
 
     return (

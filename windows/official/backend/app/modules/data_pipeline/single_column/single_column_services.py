@@ -1,6 +1,49 @@
+from typing import Any, Dict, Optional, List
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, Optional
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.modules.data_pipeline.queries import get_dynamic_gathering_query
+
+from app.modules.data_pipeline.utils import clean_nan_and_inf
+
+
+def get_dataframe_from_version_local(
+    db: Session, version_id: str = "v0_raw", id_attraction: Optional[str] = None
+) -> pd.DataFrame:
+    """Tự đọc dữ liệu từ Database theo version và id_attraction (Tách biệt hoàn toàn với data_analysis)."""
+    conn = db.connection()
+    target_attr = id_attraction.upper() if id_attraction else "ALL"
+
+    # 1. Trường hợp phiên bản thô v0_raw: gọi câu query Pivot động
+    if not version_id or version_id == "v0_raw":
+        query_sql = get_dynamic_gathering_query(
+            db.bind, id_attraction=target_attr, version="v0_raw"
+        )
+        return pd.read_sql(text(query_sql), conn)
+
+    # 2. Trường hợp các version khác trong schema data_prep
+    schema_name = "data_prep"
+    query_str = f'SELECT * FROM "{schema_name}"."{version_id}"'
+
+    # Kiểm tra xem bảng trong data_prep có cột id_attraction hay không
+    cols_query = text("""
+        SELECT column_name FROM information_schema.columns 
+        WHERE table_schema = :s AND table_name = :t AND column_name = 'id_attraction'
+    """)
+    has_id_attr_col = conn.execute(
+        cols_query, {"s": schema_name, "t": version_id}
+    ).fetchone()
+
+    # Lọc theo id_attraction nếu có cột id_attraction và target != 'ALL'
+    if target_attr != "ALL" and has_id_attr_col:
+        query_str += " WHERE id_attraction = :attr_id"
+        df = pd.read_sql(text(query_str), conn, params={"attr_id": target_attr})
+    else:
+        df = pd.read_sql(text(query_str), conn)
+
+    return df
 
 
 def _cast_val(v: Any, is_int: bool = False) -> Optional[Any]:
@@ -18,14 +61,20 @@ def _check_is_integer_col(col_name: str, serie_valide: pd.Series) -> bool:
 
 
 def analyser_profil_colonne_seule(
-    df: pd.DataFrame, col_name: str, id_attraction: Optional[str] = None
+    df: pd.DataFrame,
+    col_name: str,
+    id_attraction: Optional[str] = None,
+    version: Optional[str] = "v0_raw",
 ) -> Dict[str, Any]:
-    """Phân tích chi tiết 1 cột (Single Column Profiling) hỗ trợ chuẩn hóa Int vs Float."""
+    """Phân tích chi tiết 1 cột (Single Column Profiling) hỗ trợ Versioning & Attraction Filter."""
     if df.empty or col_name not in df.columns:
-        return {"erreur": f"Cột '{col_name}' không tồn tại hoặc DataFrame rỗng."}
+        return {
+            "erreur": f"Cột '{col_name}' không tồn tại trong phiên bản '{version}'."
+        }
 
     df_target = df.copy()
 
+    # Filter bổ sung theo attraction nếu dữ liệu chưa được lọc ở SQL level
     if (
         id_attraction
         and str(id_attraction).upper() != "ALL"
@@ -37,7 +86,9 @@ def analyser_profil_colonne_seule(
 
     total_rows = len(df_target)
     if total_rows == 0:
-        return {"erreur": f"Không có dữ liệu cho id_attraction = '{id_attraction}'"}
+        return {
+            "erreur": f"Không có dữ liệu cho id_attraction = '{id_attraction}' và version = '{version}'"
+        }
 
     # Ép về dạng số trước
     df_target[col_name] = pd.to_numeric(df_target[col_name], errors="coerce")
@@ -45,7 +96,9 @@ def analyser_profil_colonne_seule(
     serie_valide = serie.dropna()
 
     is_numeric = pd.api.types.is_numeric_dtype(serie)
-    is_integer_col = _check_is_integer_col(col_name, serie_valide) if is_numeric else False
+    is_integer_col = (
+        _check_is_integer_col(col_name, serie_valide) if is_numeric else False
+    )
     dtype_str = "int64" if is_integer_col else str(serie.dtype)
 
     nb_missing = int(serie.isnull().sum())
@@ -53,7 +106,12 @@ def analyser_profil_colonne_seule(
     nb_unique = int(serie.nunique(dropna=True))
 
     nb_zeros, pct_zeros, nb_negatifs, pct_negatifs, nb_outliers, pct_outliers = (
-        0, 0.0, 0, 0.0, 0, 0.0
+        0,
+        0.0,
+        0,
+        0.0,
+        0,
+        0.0,
     )
     box_plot_data, histogram_data = None, None
     line_plots_data = {
@@ -103,12 +161,14 @@ def analyser_profil_colonne_seule(
             else:
                 bin_str = f"{round(bin_edges[i], 1)} - {round(bin_edges[i + 1], 1)}"
 
-            histogram_data.append({
-                "bin_range": bin_str,
-                "count": int(counts[i]),
-            })
+            histogram_data.append(
+                {
+                    "bin_range": bin_str,
+                    "count": int(counts[i]),
+                }
+            )
 
-        # Time Series
+        # Time Series Aggregation
         if "datetime" in df_target.columns:
             df_target["datetime"] = pd.to_datetime(df_target["datetime"])
 
@@ -192,6 +252,7 @@ def analyser_profil_colonne_seule(
     return {
         "nom_colonne": col_name,
         "id_attraction": id_attraction or "ALL",
+        "selected_version": version or "v0_raw",
         "statistiques": {
             "type_donnees": dtype_str,
             "total_lignes": total_rows,
@@ -211,3 +272,33 @@ def analyser_profil_colonne_seule(
             "courbes_temporelles": line_plots_data,
         },
     }
+
+def analyser_multi_versions(
+    db: Session,
+    col_name: str,
+    versions: List[str],
+    id_attraction: Optional[str] = "ALL"
+) -> Dict[str, Any]:
+    """Phân tích đồng thời một cột trên nhiều version khác nhau để trả về chung một payload."""
+    results = {}
+    for ver in versions:
+        try:
+            # 1. Lấy dataframe theo từng version
+            df = get_dataframe_from_version_local(
+                db=db, version_id=ver, id_attraction=id_attraction
+            )
+            if df.empty:
+                continue
+            
+            # 2. Chạy hàm phân tích đơn
+            res = analyser_profil_colonne_seule(
+                df=df, col_name=col_name, id_attraction=id_attraction, version=ver
+            )
+            if "erreur" not in res:
+                results[ver] = clean_nan_and_inf(res)
+        except Exception as e:
+            # Bỏ qua lỗi nhỏ của version đơn lẻ để không làm sập cả cụm so sánh
+            print(f"Erreur analyse version {ver}: {str(e)}")
+            continue
+            
+    return results

@@ -560,14 +560,10 @@ class MissingValueService:
             {col: int(processed_df[col].isnull().sum()) for col in processed_df.columns}
         )
 
-        # ĐÁNH SỐ TĂNG DẦN v1, v2, v3 ĐỘC LẬP THEO TỪNG ID_ATTRACTION
+        # ĐÁNH SỐ TĂNG DẦN v1, v2, v3 TOÀN CỤC (Không phụ thuộc id_attr nữa để tránh trùng lặp)
         with engine.connect() as conn:
             rows = conn.execute(
-                text(
-                    f"SELECT version_id FROM {SCHEMA_NAME}.data_version_registry "
-                    f"WHERE id_attraction = :id_attr"
-                ),
-                {"id_attr": id_attr},
+                text(f"SELECT version_id FROM {SCHEMA_NAME}.data_version_registry")
             ).fetchall()
 
         existing_nums = []
@@ -580,7 +576,8 @@ class MissingValueService:
         next_ver = max(existing_nums) + 1 if existing_nums else 1
         attr_suffix = f"_{id_attr}" if id_attr != "ALL" else ""
 
-        new_version_id = f"v{next_ver}_{method}{attr_suffix}"
+        # Tên version lúc này sẽ dạng: v1_mean_H03, v2_iqr_cap_H03, v3_iqr_cap_ALL,...
+        new_version_id = f"v{next_ver}_{method}_{attr_suffix}"  # (hoặc _{method} bên missing value)
 
         saved_file_path = cls.save_version_dataframe(new_version_id, processed_df)
 

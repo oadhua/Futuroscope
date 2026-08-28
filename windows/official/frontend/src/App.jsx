@@ -23,6 +23,7 @@ import SingleColumn from './modules/data_pipeline/SingleColumn/SingleColumn';
 import MultiColumn from './modules/data_pipeline/MultiColumn/MultiColumn';
 import TimeSeriesAnalysis from './modules/data_pipeline/TimeSeriesAnalysis/TimeSeriesAnalysis';
 import MissingValue from './modules/data_pipeline/MissingValue/MissingValue';
+import Outliers from './modules/data_pipeline/Outliers/Outliers';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('pipeline');
@@ -40,6 +41,7 @@ export default function App() {
         { id: 'multiColumn', label: '1.5 Multi Column Analysis', icon: <Columns size={16} /> },
         { id: 'timeseriesAnalysis', label: '1.6 Time Series Analysis', icon: <Clock size={16} /> },
         { id: 'missingValue', label: '1.7 Missing Value Imputation', icon: <Activity size={16} /> },
+        { id: 'outliers', label: '1.8 Outliers Imputation', icon: <Activity size={16} /> },
       ]
     },
     ml: {
@@ -74,6 +76,7 @@ export default function App() {
       if (activeSubTab === 'multiColumn') return <MultiColumn />;
       if (activeSubTab === 'timeseriesAnalysis') return <TimeSeriesAnalysis />;
       if (activeSubTab === 'missingValue') return <MissingValue />;
+      if (activeSubTab === 'outliers') return <Outliers />;
     }
 
     if (activeTab === 'ml') {

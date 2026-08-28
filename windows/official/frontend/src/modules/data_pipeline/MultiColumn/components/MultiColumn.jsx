@@ -1,85 +1,140 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     Sliders, Filter, AlertTriangle, ChevronDown,
     Layers, AlertCircle, Hash, TrendingDown, Activity, Columns
 } from 'lucide-react';
 import Plot from 'react-plotly.js';
 
+// Hàm tự động tạo màu phân bố đều theo không gian HSL cho các version (tương tự SingleColumn)
+const getDynamicColor = (index, total) => {
+    if (total <= 1) return '#059669';
+    const hue = Math.round((index * 360) / total);
+    return `hsl(${hue}, 70%, 45%)`;
+};
+
 export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count' }) {
-    // --- States ---
-    const [targetVar, setTargetVar] = useState(initialTargetVar);
+    // --- States Quản lý Bộ lọc & Version ---
+    const [selectedVersion, setSelectedVersion] = useState('v0_raw');
     const [selectedAttraction, setSelectedAttraction] = useState('ALL');
+    const [targetVar, setTargetVar] = useState(initialTargetVar);
     const [corrMethod, setCorrMethod] = useState('pearson');
     const [varX, setVarX] = useState('datetime');
     const [varY, setVarY] = useState('visitor_count');
 
+    // --- States Dữ liệu & List Metadata ---
     const [data, setData] = useState(null);
-    const [availableAttractions, setAvailableAttractions] = useState([]);
+    const [allVersions, setAllVersions] = useState(['v0_raw']);
+    const [attractionList, setAttractionList] = useState([]);
     const [availableColumns, setAvailableColumns] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    // --- Fetch Metadata ---
+    const abortControllerRef = useRef(null);
+
+    // --- 1. Lấy danh sách Version và Attraction khả dụng từ Server ---
     useEffect(() => {
         const fetchMeta = async () => {
             try {
-                let url = 'http://localhost:8000/analysis/analyse-globale?nom_table=fact_attraction_hourly&nb_lignes_apercu=1';
-                if (selectedAttraction && selectedAttraction !== 'ALL') {
-                    url += `&id_attraction=${selectedAttraction}`;
+                // Fetch danh sách Versions
+                const resSchema = await fetch('http://localhost:8000/analysis/versions-schema');
+                if (resSchema.ok) {
+                    const resData = await resSchema.json();
+                    const list = resData.versions || resData || [];
+                    const vIds = list.map(v => typeof v === 'string' ? v : (v.version_id || v.table_name));
+                    if (!vIds.includes('v0_raw')) vIds.unshift('v0_raw');
+                    setAllVersions([...new Set(vIds)]);
                 }
 
-                const response = await fetch(url);
-                if (response.ok) {
-                    const resGlobal = await response.json();
-
-                    if (resGlobal.comparaison_colonnes) {
-                        const cols = resGlobal.comparaison_colonnes.map(c => c.nom_colonne);
-                        setAvailableColumns(cols);
-                        setTargetVar(prev => (cols.length > 0 && !cols.includes(prev) ? cols[0] : prev));
-                    }
-
-                    if (resGlobal.liste_attractions && availableAttractions.length === 0) {
-                        setAvailableAttractions(resGlobal.liste_attractions);
-                    }
+                // Fetch danh sách Attractions
+                const resAttr = await fetch('http://localhost:8000/analysis/attractions');
+                if (resAttr.ok) {
+                    const listAttr = await resAttr.json();
+                    setAttractionList(listAttr);
                 }
             } catch (err) {
-                console.warn("Méta-données non disponibles:", err);
+                console.warn("Không thể tải metadata bộ lọc:", err);
             }
         };
 
         fetchMeta();
-    }, [selectedAttraction]);
+    }, []);
 
-    // --- Fetch Multi-Column Data ---
-    const fetchMultiColumnData = async () => {
+    // --- 2. Lọc danh sách Version tương thích theo Attraction ---
+    const filteredVersionList = useMemo(() => {
+        if (!selectedAttraction || selectedAttraction === 'ALL') {
+            return allVersions;
+        }
+        const attrUpper = selectedAttraction.toUpperCase();
+        const filtered = allVersions.filter(v => {
+            if (v === 'v0_raw') return true;
+            return v.toUpperCase().includes(attrUpper);
+        });
+        return filtered.length > 0 ? filtered : ['v0_raw'];
+    }, [allVersions, selectedAttraction]);
+
+    // --- 3. Xử lý khi thay đổi Attraction ---
+    const handleAttractionChange = (newAttr) => {
+        setSelectedAttraction(newAttr);
+
+        let availableForNewAttr = allVersions;
+        if (newAttr && newAttr !== 'ALL') {
+            const attrUpper = newAttr.toUpperCase();
+            availableForNewAttr = allVersions.filter(v => v === 'v0_raw' || v.toUpperCase().includes(attrUpper));
+        }
+
+        if (!availableForNewAttr.includes(selectedVersion)) {
+            setSelectedVersion(availableForNewAttr[0] || 'v0_raw');
+        }
+    };
+
+    // --- 4. Fetch Dữ liệu Multi-Column Profiling ---
+    const fetchMultiColumnData = async (ver, attr, target, method, signal) => {
         setLoading(true);
         setError(null);
         try {
-            let url = `http://localhost:8000/analysis/multi-column-profiling?target_var=${targetVar}&corr_method=${corrMethod.toLowerCase()}`;
-            if (selectedAttraction && selectedAttraction !== 'ALL') {
-                url += `&id_attraction=${selectedAttraction}`;
+            let url = `http://localhost:8000/analysis/multi-column-profiling?version=${ver}&target_var=${target}&corr_method=${method.toLowerCase()}`;
+            if (attr && attr !== 'ALL') {
+                url += `&id_attraction=${attr}`;
             }
 
-            const response = await fetch(url);
+            const response = await fetch(url, { signal });
             if (!response.ok) {
-                throw new Error(`Erreur HTTP: ${response.status}`);
+                const errJson = await response.json().catch(() => ({}));
+                throw new Error(errJson.detail || `Lỗi HTTP: ${response.status}`);
             }
             const resData = await response.json();
             setData(resData);
 
+            // Cập nhật các cột khả dụng cho Dropdown Cột mục tiêu
             if (resData.correlation_matrix?.columns?.length > 0) {
-                setVarY(resData.correlation_matrix.columns[0]);
+                const colsList = resData.correlation_matrix.columns;
+                setAvailableColumns(colsList);
+
+                if (!colsList.includes(target)) {
+                    setTargetVar(colsList[0]);
+                }
+                setVarY(colsList[0]);
             }
         } catch (err) {
-            setError(err.message || "Impossible de charger le profilage multi-colonnes.");
+            if (err.name !== 'AbortError') {
+                setError(err.message || "Không thể tải dữ liệu phân tích đa cột.");
+            }
         } finally {
-            setLoading(false);
+            if (!signal.aborted) setLoading(false);
         }
     };
 
     useEffect(() => {
-        fetchMultiColumnData();
-    }, [targetVar, selectedAttraction, corrMethod]);
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
+        fetchMultiColumnData(selectedVersion, selectedAttraction, targetVar, corrMethod, controller.signal);
+
+        return () => controller.abort();
+    }, [selectedVersion, selectedAttraction, targetVar, corrMethod]);
 
     // --- Derived Data ---
     const cols = useMemo(() => data?.correlation_matrix?.columns || [], [data]);
@@ -88,52 +143,17 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
     const funcDeps = useMemo(() => data?.functional_dependencies || [], [data]);
     const sampleData = useMemo(() => data?.sample_data || [], [data]);
 
-    // --- Styles được tối ưu hóa chuẩn Layout ---
+    // --- Styles đồng bộ theo SingleColumn & DataAnalysis ---
     const styles = {
         wrapper: { minHeight: '100vh', backgroundColor: '#f8fafc', padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' },
-        container: { maxWidth: '1150px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' },
+        container: { maxWidth: '1360px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' },
         card: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)', boxSizing: 'border-box' },
-        headerCard: {
-            backgroundColor: '#ffffff',
-            borderRadius: '24px',
-            border: '1px solid #e2e8f0',
-            padding: '16px 24px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '16px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-            minHeight: '80px',            // Đã sửa thuộc tính minHeight chính xác
-            boxSizing: 'border-box',
-        },
-        selectBox: {
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            backgroundColor: '#f8fafc',
-            border: '1px solid #e2e8f0',
-            padding: '8px 14px',
-            borderRadius: '16px',
-            fontSize: '12px',
-            minWidth: '220px',
-            maxWidth: '280px',             // Giới hạn chiều rộng thẻ select vừa đủ đẹp
-            flexShrink: 1
-        },
-        select: {
-            border: 'none',
-            background: 'transparent',
-            fontWeight: 'bold',
-            color: '#0f172a',
-            outline: 'none',
-            cursor: 'pointer',
-            appearance: 'none',
-            width: '100%',
-            textOverflow: 'ellipsis',      // Cắt bớt văn bản bằng dấu ... nếu tên quá dài
-            overflow: 'hidden',
-            whiteSpace: 'nowrap'
-        },
-        kpiGrid: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)', minHeight: '80px', boxSizing: 'border-box' },
-        kpiItem: { display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 10px', minWidth: 0 },
+        headerCard: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' },
+        topBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' },
+        selectBox: { display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '8px 14px', borderRadius: '16px', fontSize: '12px', minWidth: '180px' },
+        select: { border: 'none', background: 'transparent', fontWeight: 'bold', color: '#0f172a', outline: 'none', cursor: 'pointer', appearance: 'none', width: '100%', lineHeight: '1' },
+        kpiGrid: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '12px 16px', display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' },
+        kpiItem: { display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 4px', minWidth: 0 },
         iconBg: (bg, color) => ({ backgroundColor: bg, color: color, padding: '10px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }),
         gridTwoCols: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '16px' },
         tableTh: { padding: '10px 0', borderBottom: '1px solid #f1f5f9', color: '#94a3b8', fontSize: '11px', fontWeight: '600', textAlign: 'left' },
@@ -141,151 +161,219 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
         loadingOverlay: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.7)', position: 'absolute', top: 0, left: 0, borderRadius: '24px', zIndex: 10 }
     };
 
+    if (loading && !data) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '500px', gap: '16px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '50%', border: '4px solid #dbeafe', borderTopColor: '#2563eb', animation: 'spin 1s linear infinite' }} />
+                <p style={{ color: '#64748b', fontWeight: '500', fontSize: '14px' }}>Chargement du profilage multi-colonnes...</p>
+                <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+            </div>
+        );
+    }
+
     return (
         <div style={styles.wrapper}>
             <div style={styles.container}>
 
-                {/* 1. HEADER (Tuyệt đối không đè chữ, không rớt dòng) */}
+                {/* 1. HEADER CARD & STEPPER VERSION */}
                 <div style={styles.headerCard}>
-                    {/* Cụm Tiêu đề bên trái: Co giãn thông minh */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: '1 1 auto', minWidth: 0 }}>
-                        <div style={styles.iconBg('#eff6ff', '#2563eb')}>
-                            <Columns size={24} />
+                    <div style={styles.topBar}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            <div style={styles.iconBg('#eff6ff', '#2563eb')}>
+                                <Columns size={24} />
+                            </div>
+                            <div>
+                                <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', lineHeight: '1.2' }}>
+                                    Profilage Multi-Colonnes
+                                </h1>
+                                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94a3b8', fontWeight: '600', lineHeight: '1.2' }}>
+                                    Target : <span style={{ color: '#2563eb' }}>{targetVar}</span> | Version : <span style={{ color: '#059669' }}>{selectedVersion}</span>
+                                </p>
+                            </div>
                         </div>
-                        <div style={{ minWidth: 0, overflow: 'hidden' }}>
-                            <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.02em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                Profilage Multi-Colonnes
-                            </h1>
-                            <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#94a3b8', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                Variable sélectionnée : <span style={{ color: '#2563eb' }}>{targetVar}</span>
-                            </p>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                            {/* Filtre Attraction */}
+                            <div style={styles.selectBox}>
+                                <Filter size={14} color="#94a3b8" />
+                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Attraction :</span>
+                                <select value={selectedAttraction} onChange={(e) => handleAttractionChange(e.target.value)} style={styles.select}>
+                                    <option value="ALL">Toutes les attractions</option>
+                                    {attractionList.map(id => <option key={id} value={id}>Attraction {id}</option>)}
+                                </select>
+                                <ChevronDown size={14} color="#94a3b8" />
+                            </div>
+
+                            {/* Filtre Variable Cột mục tiêu */}
+                            <div style={styles.selectBox}>
+                                <Sliders size={14} color="#94a3b8" />
+                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Variable :</span>
+                                <select value={targetVar} onChange={(e) => setTargetVar(e.target.value)} style={styles.select}>
+                                    {availableColumns.length > 0 ? (
+                                        availableColumns.map(col => <option key={col} value={col}>{col}</option>)
+                                    ) : (
+                                        <option value={targetVar}>{targetVar}</option>
+                                    )}
+                                </select>
+                                <ChevronDown size={14} color="#94a3b8" />
+                            </div>
                         </div>
                     </div>
 
-                    {/* Cụm Select Filters bên phải: Cố định kích thước */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-                        {/* Dropdown 1: Colonne */}
-                        <div style={styles.selectBox}>
-                            <Sliders size={15} color="#94a3b8" style={{ flexShrink: 0 }} />
-                            <span style={{ color: '#64748b', fontWeight: '600', flexShrink: 0 }}>Colonne :</span>
-                            <select value={targetVar} onChange={(e) => setTargetVar(e.target.value)} style={styles.select}>
-                                {availableColumns.length > 0 ? (
-                                    availableColumns.map(col => <option key={col} value={col}>{col}</option>)
-                                ) : (
-                                    <option value={targetVar}>{targetVar}</option>
-                                )}
-                            </select>
-                            <ChevronDown size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
+                    {/* STEPPER CHỌN VERSION */}
+                    <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '20px 24px', width: '100%', boxSizing: 'border-box' }}>
+                        <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
+                            Choisissez la version principale des données
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                            {filteredVersionList.map((ver, index) => {
+                                const isSelected = selectedVersion === ver;
+                                const isLast = index === filteredVersionList.length - 1;
+                                const verColor = getDynamicColor(index, filteredVersionList.length);
 
-                        {/* Dropdown 2: Attraction */}
-                        <div style={styles.selectBox}>
-                            <Filter size={15} color="#94a3b8" style={{ flexShrink: 0 }} />
-                            <span style={{ color: '#64748b', fontWeight: '600', flexShrink: 0 }}>Attraction :</span>
-                            <select value={selectedAttraction} onChange={(e) => setSelectedAttraction(e.target.value)} style={styles.select}>
-                                <option value="ALL">Toutes les attractions</option>
-                                {availableAttractions.map(id => <option key={id} value={id}>Attraction {id}</option>)}
-                            </select>
-                            <ChevronDown size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
+                                return (
+                                    <React.Fragment key={ver}>
+                                        <div
+                                            onClick={() => setSelectedVersion(ver)}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}
+                                        >
+                                            <div style={{
+                                                width: '28px', height: '28px', borderRadius: '50%',
+                                                backgroundColor: isSelected ? verColor : '#94a3b8',
+                                                color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                fontSize: '12px', fontWeight: '700', transition: 'all 0.2s ease',
+                                                boxShadow: isSelected ? `0 0 0 4px ${verColor}25` : 'none', flexShrink: 0
+                                            }}>
+                                                {index + 1}
+                                            </div>
+                                            <span style={{ fontSize: '13px', fontWeight: isSelected ? '700' : '500', color: isSelected ? '#1e293b' : '#64748b', whiteSpace: 'nowrap' }}>
+                                                {ver}
+                                            </span>
+                                        </div>
+                                        {!isLast && <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0', margin: '0 12px', minWidth: '16px' }} />}
+                                    </React.Fragment>
+                                );
+                            })}
                         </div>
                     </div>
                 </div>
 
-                {/* 2. KPI STATS CARD */}
+                {/* Báo lỗi hệ thống */}
+                {error && (
+                    <div style={{ padding: '16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '16px', color: '#991b1b', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <AlertTriangle size={20} color="#dc2626" />
+                        <span>{error}</span>
+                    </div>
+                )}
+
+                {/* 2. KPI METRICS GRID */}
                 <div style={styles.kpiGrid}>
                     <div style={styles.kpiItem}>
                         <div style={styles.iconBg('#faf5ff', '#9333ea')}><Layers size={18} /></div>
-                        <div style={{ overflow: 'hidden' }}>
-                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Colonnes</div>
-                            <div style={{ fontSize: '14px', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{loading ? '-' : cols.length}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Colonnes</div>
+                            <div style={{ fontSize: '14px', fontWeight: '800', color: '#0f172a', marginTop: '2px', lineHeight: '1.2' }}>{loading ? '-' : cols.length}</div>
                         </div>
                     </div>
 
                     <div style={styles.kpiItem}>
                         <div style={styles.iconBg('#fffbeb', '#d97706')}><AlertCircle size={18} /></div>
-                        <div style={{ overflow: 'hidden' }}>
-                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Corrélations</div>
-                            <div style={{ fontSize: '14px', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{loading ? '-' : targetCorr.length}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Corrélations</div>
+                            <div style={{ fontSize: '14px', fontWeight: '800', color: '#d97706', marginTop: '2px', lineHeight: '1.2' }}>{loading ? '-' : targetCorr.length}</div>
                         </div>
                     </div>
 
                     <div style={styles.kpiItem}>
                         <div style={styles.iconBg('#ecfdf5', '#059669')}><Hash size={18} /></div>
-                        <div style={{ overflow: 'hidden' }}>
-                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Dépendances</div>
-                            <div style={{ fontSize: '14px', fontWeight: '800', color: '#059669', marginTop: '2px' }}>{loading ? '-' : funcDeps.length}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Dépendances</div>
+                            <div style={{ fontSize: '14px', fontWeight: '800', color: '#059669', marginTop: '2px', lineHeight: '1.2' }}>{loading ? '-' : funcDeps.length}</div>
                         </div>
                     </div>
 
                     <div style={styles.kpiItem}>
                         <div style={styles.iconBg('#fff1f2', '#e11d48')}><TrendingDown size={18} /></div>
-                        <div style={{ overflow: 'hidden' }}>
-                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Méthode</div>
-                            <div style={{ fontSize: '14px', fontWeight: '800', color: '#e11d48', textTransform: 'capitalize', marginTop: '2px' }}>{corrMethod}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Méthode</div>
+                            <div style={{ fontSize: '14px', fontWeight: '800', color: '#e11d48', textTransform: 'capitalize', marginTop: '2px', lineHeight: '1.2' }}>{corrMethod}</div>
                         </div>
                     </div>
 
                     <div style={styles.kpiItem}>
                         <div style={styles.iconBg('#fef2f2', '#dc2626')}><Activity size={18} /></div>
-                        <div style={{ overflow: 'hidden' }}>
-                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Échantillons</div>
-                            <div style={{ fontSize: '14px', fontWeight: '800', color: '#dc2626', marginTop: '2px' }}>{loading ? '-' : sampleData.length}</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                            <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', lineHeight: '1.2' }}>Échantillons</div>
+                            <div style={{ fontSize: '14px', fontWeight: '800', color: '#dc2626', marginTop: '2px', lineHeight: '1.2' }}>{loading ? '-' : sampleData.length}</div>
                         </div>
                     </div>
                 </div>
 
-                {/* Báo lỗi nếu API gặp sự cố */}
-                {error && (
-                    <div style={{ padding: '16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '16px', color: '#991b1b', fontSize: '13px' }}>
-                        Erreur de chargement: {error}
-                    </div>
-                )}
-
-                {/* 3. HEATMAP CORRELATION MATRIX */}
-                <div style={{ ...styles.card, position: 'relative', minHeight: '520px' }}>
+                {/* 3. HEATMAP CORRELATION MATRIX (ĐÃ TỐI ƯU RỘNG RÃI & KHUNG METHODE ĐẸP) */}
+                <div style={{ ...styles.card, position: 'relative', minHeight: '680px' }}>
                     {loading && (
                         <div style={styles.loadingOverlay}>
                             <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>Chargement de la matrice...</span>
                         </div>
                     )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-                        <h2 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#0f172a' }}>Matrice de Corrélation</h2>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+                        <div>
+                            <h2 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#0f172a', lineHeight: '1.2' }}>
+                                Matrice de Corrélation
+                            </h2>
+                            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94a3b8' }}>
+                                Visualisation des corrélations croisées entre les variables
+                            </p>
+                        </div>
+
+                        {/* KHUNG METHODE ĐƯỢC CHUẨN HÓA ĐẸP MẮT */}
                         <div style={styles.selectBox}>
-                            <span style={{ color: '#94a3b8' }}>Méthode:</span>
+                            <Sliders size={14} color="#94a3b8" />
+                            <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Méthode :</span>
                             <select value={corrMethod} onChange={(e) => setCorrMethod(e.target.value)} style={styles.select}>
-                                {['pearson', 'spearman', 'kendall'].map(m => <option key={m} value={m}>{m}</option>)}
+                                {['pearson', 'spearman', 'kendall'].map(m => (
+                                    <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>
+                                ))}
                             </select>
+                            <ChevronDown size={14} color="#94a3b8" />
                         </div>
                     </div>
 
-                    <div style={{ width: '100%', height: '420px' }}>
+                    {/* VÙNG CHỨA HEATMAP MỞ RỘNG TOÀN DIỆN */}
+                    <div style={{ width: '100%', height: '580px' }}>
                         {cols.length > 0 ? (
                             <Plot
                                 data={[{
                                     z: matrixValues, x: cols, y: cols, type: 'heatmap',
                                     colorscale: [[0.0, '#2563eb'], [0.5, '#f8fafc'], [1.0, '#1d4ed8']],
                                     zmin: -1, zmax: 1,
-                                    colorbar: { thickness: 12, len: 0.88, tickfont: { size: 10, color: '#64748b' } },
+                                    colorbar: {
+                                        thickness: 14,
+                                        len: 0.95,
+                                        tickfont: { size: 11, color: '#64748b' },
+                                        outlinewidth: 0
+                                    },
                                     hovertemplate: '<b>X:</b> %{x}<br><b>Y:</b> %{y}<br><b>Corrélation:</b> %{z:.3f}<extra></extra>'
                                 }]}
                                 layout={{
-                                    autosize: true, margin: { t: 20, r: 20, l: 90, b: 90 },
-                                    xaxis: { tickangle: -40, tickfont: { size: 10, color: '#64748b' }, automargin: true },
-                                    yaxis: { tickfont: { size: 10, color: '#64748b' }, autorange: 'reversed', automargin: true }
+                                    autosize: true,
+                                    margin: { t: 30, r: 30, l: 110, b: 110 },
+                                    xaxis: { tickangle: -35, tickfont: { size: 11, color: '#475569' }, automargin: true },
+                                    yaxis: { tickfont: { size: 11, color: '#475569' }, autorange: 'reversed', automargin: true }
                                 }}
                                 useResizeHandler={true}
                                 style={{ width: '100%', height: '100%' }}
                                 config={{ displayModeBar: false }}
                             />
                         ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8', fontStyle: 'italic', fontSize: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8', fontStyle: 'italic', fontSize: '13px' }}>
                                 Aucune donnée de corrélation disponible.
                             </div>
                         )}
                     </div>
                 </div>
 
-                {/* 4. SIDE-BY-SIDE TABLES */}
+                {/* 4. TABLES DÂN CORRELATION */}
                 <div style={styles.gridTwoCols}>
                     <div style={{ ...styles.card, minHeight: '380px' }}>
                         <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: 'bold', color: '#0f172a' }}>
@@ -343,7 +431,9 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
                 {/* 5. INTERACTIONS LINE PLOT */}
                 <div style={{ ...styles.card, minHeight: '400px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-                        <h2 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#0f172a' }}>Interactions entre Variables</h2>
+                        <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', color: '#0f172a', lineHeight: '1.2' }}>
+                            Interactions entre Variables
+                        </h2>
                         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                             <div style={styles.selectBox}>
                                 <span style={{ color: '#94a3b8', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -399,10 +489,10 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
                 {/* 6. FUNCTIONAL DEPENDENCIES CARD */}
                 <div style={{ ...styles.card, padding: '32px', minHeight: '220px' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
-                        <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold', color: '#0f172a' }}>Functional Dependancies</h2>
+                        <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold', color: '#0f172a' }}>Functional Dependencies</h2>
                         <div style={{ position: 'relative', maxWidth: '480px' }}>
                             <label style={{ position: 'absolute', top: '-8px', left: '16px', backgroundColor: '#ffffff', padding: '0 4px', fontSize: '11px', fontWeight: '600', color: '#94a3b8' }}>
-                                Choose The Dependante Column
+                                Target Variable
                             </label>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', border: '1px solid #e2e8f0', borderRadius: '16px', fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>
                                 <span>{targetVar}</span>

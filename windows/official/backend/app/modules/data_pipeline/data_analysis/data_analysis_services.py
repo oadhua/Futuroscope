@@ -9,7 +9,7 @@ from app.modules.data_pipeline.queries import get_dynamic_gathering_query
 
 
 def get_data_prep_versions_service(db: Session) -> List[str]:
-    """Lấy danh sách tất cả các bảng phiên bản trong schema data_prep."""
+    """Lấy danh sách tất cả các bảng phiên bản trong schema data_prep (bỏ qua các bảng hệ thống)."""
     db.commit()
     connection = db.connection()
     inspector = inspect(connection)
@@ -30,6 +30,10 @@ def get_data_prep_versions_service(db: Session) -> List[str]:
         """)
         result = db.execute(query).fetchall()
         tables = [row[0] for row in result]
+
+    # 1. LỌC BỎ các bảng hệ thống / registry
+    EXCLUDED_TABLES = {"data_version_registry"}
+    tables = [t for t in tables if t.lower() not in EXCLUDED_TABLES]
 
     tables = sorted(tables)
     if "v0_raw" not in tables:
@@ -79,8 +83,7 @@ def compute_version_distribution_for_attraction(
 
     # Lọc danh sách phiên bản liên quan đến attraction này
     relevant_versions = [
-        v for v in all_versions 
-        if v == "v0_raw" or attr_upper in v.upper()
+        v for v in all_versions if v == "v0_raw" or attr_upper in v.upper()
     ]
 
     version_counts = {}
@@ -88,7 +91,9 @@ def compute_version_distribution_for_attraction(
 
     for v in relevant_versions:
         try:
-            df_v = get_dataframe_from_version(db, version_id=v, id_attraction=id_attraction)
+            df_v = get_dataframe_from_version(
+                db, version_id=v, id_attraction=id_attraction
+            )
             count = len(df_v)
             version_counts[v] = count
             total_across_versions += count
@@ -97,12 +102,12 @@ def compute_version_distribution_for_attraction(
 
     repartition = []
     for v, count in version_counts.items():
-        pct = round((count / total_across_versions * 100), 2) if total_across_versions > 0 else 0.0
-        repartition.append({
-            "name": v,
-            "total_lignes": count,
-            "pourcentage": pct
-        })
+        pct = (
+            round((count / total_across_versions * 100), 2)
+            if total_across_versions > 0
+            else 0.0
+        )
+        repartition.append({"name": v, "total_lignes": count, "pourcentage": pct})
 
     return repartition
 
@@ -228,7 +233,9 @@ def generate_profilage_service(
     # 🌟 NẾU CHỌN 1 ATTRACTION CỤ THỂ -> TÍNH PHÂN BỔ QUA CÁC VERSION
     repartition_par_version = None
     if id_attraction and id_attraction.upper() != "ALL":
-        repartition_par_version = compute_version_distribution_for_attraction(db, id_attraction)
+        repartition_par_version = compute_version_distribution_for_attraction(
+            db, id_attraction
+        )
 
     date_debut, date_fin = "N/A", "N/A"
     datetime_cols = df.select_dtypes(include=["datetime", "datetime64"]).columns
@@ -260,7 +267,7 @@ def generate_profilage_service(
         "date_fin": date_fin,
         "liste_attractions": liste_attractions,
         "repartition_par_attraction": attraction_distribution,
-        "repartition_par_version": repartition_par_version, # 🌟 THÊM TRƯỜNG NÀY VÀO RESPONSE
+        "repartition_par_version": repartition_par_version,  # 🌟 THÊM TRƯỜNG NÀY VÀO RESPONSE
         "utilisation_memoire": memoire_list,
         "comparaison_colonnes": comparaison_colonnes,
         "apercu_donnees": apercu,

@@ -10,6 +10,7 @@ from app.modules.data_pipeline.single_column.single_column_router import router 
 from app.modules.data_pipeline.multi_column.multi_column_router import router as multi_column_router
 from app.modules.data_pipeline.timeseries_analysis.timeseries_analysis_router import router as timeseries_analysis_router
 from app.modules.data_pipeline.missing_value.missing_value_router import router as missing_value_router
+from app.modules.data_pipeline.outliers.outliers_router import router as outliers_router
 from app.core.database import engine
 
 # Khởi tạo ứng dụng FastAPI
@@ -44,6 +45,7 @@ app.include_router(single_column_router)
 app.include_router(multi_column_router)
 app.include_router(timeseries_analysis_router)
 app.include_router(missing_value_router)
+app.include_router(outliers_router)
 Base.metadata.create_all(bind=engine)
 
 

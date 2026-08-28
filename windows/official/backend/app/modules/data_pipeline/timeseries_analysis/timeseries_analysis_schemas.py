@@ -1,54 +1,15 @@
-import re
-from enum import Enum
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Union
 
-from app.modules.data_pipeline.timeseries_analysis.timeseries_analysis_services import (
-    get_available_attractions,
-    get_available_features,
-)
-
-def sanitize_enum_key(name: str) -> str:
-    """Chuyển chuỗi bất kỳ thành Key hợp lệ cho Enum Python (VD: 'Danse des Robots' -> 'DANSE_DES_ROBOTS')."""
-    sanitized = re.sub(r'\W+', '_', str(name)).strip('_').upper()
-    if not sanitized or sanitized[0].isdigit():
-        sanitized = f"ATTR_{sanitized}"
-    return sanitized
-
-def create_dynamic_enums():
-    raw_attractions = get_available_attractions() or ["DEFAULT"]
-    raw_features = get_available_features() or ["value"]
-
-    # Tạo dict {KEY_HỢP_LỆ: giá_trị_thực_tế_trong_db}
-    attr_dict = {sanitize_enum_key(a): str(a) for a in raw_attractions}
-    feat_dict = {sanitize_enum_key(f): str(f) for f in raw_features}
-
-    AttractionEnum = Enum("AttractionEnum", attr_dict, type=str)
-    FeatureEnum = Enum("FeatureEnum", feat_dict, type=str)
-    
-    return AttractionEnum, FeatureEnum
-
-# Khởi tạo Enum
-AttractionEnum, FeatureEnum = create_dynamic_enums()
-
-class TimeSeriesAnalysisRequest(BaseModel):
-    id_attraction: AttractionEnum = Field(
-        ..., 
-        description="Chọn Attraction từ danh sách có sẵn trong DB"
-    )
-    feature_column: FeatureEnum = Field(
-        ..., 
-        description="Chọn biến/cột dữ liệu đầu vào để phân tích"
-    )
-    version: str = Field(default="v1", description="Phiên bản mô hình/phân tích")
 
 # --- Common Request Schema ---
 class BaseTimeSeriesRequest(BaseModel):
     version: str = Field(
-        default="v1", description="Data version ID (e.g., v1, v2, all)"
+        default="v0_raw", description="Phiên bản dữ liệu (e.g., v0_raw, v1, v2)"
     )
-    id_attraction: Optional[str] = Field(
-        default=None, description="ID của attraction (nếu lọc theo attraction cụ thể)"
+    id_attraction: str = Field(
+        default="ALL",
+        description="ID của attraction (mặc định 'ALL' nếu không lọc theo từng attraction)",
     )
     col_name: str = Field(
         ...,
@@ -80,8 +41,9 @@ class DecompositionRequest(BaseTimeSeriesRequest):
         default="additive",
         description="Mô hình phân rã: 'additive' hoặc 'multiplicative'",
     )
-    period: Optional[int] = Field(
+    period: int = Field(
         default=24,
+        ge=1,
         description="Tần số chuỗi thời gian (mặc định 24 cho dữ liệu theo giờ)",
     )
 

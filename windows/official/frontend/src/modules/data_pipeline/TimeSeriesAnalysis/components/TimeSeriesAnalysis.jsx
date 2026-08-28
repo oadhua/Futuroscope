@@ -1,30 +1,39 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     Activity, TrendingUp, Sliders, Filter,
     ChevronDown, Play, CheckCircle2, AlertCircle,
-    BarChart2, Layers, Clock, Loader2
+    BarChart2, Layers, Clock, Loader2, AlertTriangle
 } from 'lucide-react';
 import Plot from 'react-plotly.js';
 
 const API_BASE_URL = 'http://localhost:8000/time-series';
 
+// Hàm tự động tạo màu phân bố đều theo không gian HSL cho các version (đồng bộ từ SingleColumn)
+const getDynamicColor = (index, total) => {
+    if (total <= 1) return '#2563eb';
+    const hue = Math.round((index * 360) / total);
+    return `hsl(${hue}, 70%, 45%)`;
+};
+
 export default function TimeSeriesAnalysis() {
     const [activeTab, setActiveTab] = useState('stationarity');
 
     // Filter States
-    const [version, setVersion] = useState('v1');
-    const [selectedAttraction, setSelectedAttraction] = useState('Toutes');
+    const [selectedVersion, setSelectedVersion] = useState('v0_raw');
+    const [selectedAttraction, setSelectedAttraction] = useState('ALL');
     const [selectedColumn, setSelectedColumn] = useState('');
 
     // Dynamic Options States
     const [availableAttractions, setAvailableAttractions] = useState([]);
     const [availableColumns, setAvailableColumns] = useState([]);
+    const [allVersions, setAllVersions] = useState(['v0_raw']);
     const [loadingOptions, setLoadingOptions] = useState(true);
 
     // Analysis Execution States
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
 
-    // Tab States
+    // Tab Specific States
     const [statMethod, setStatMethod] = useState('adf');
     const [statResult, setStatResult] = useState(null);
 
@@ -36,36 +45,58 @@ export default function TimeSeriesAnalysis() {
     const [lags, setLags] = useState(25);
     const [acfResult, setAcfResult] = useState(null);
 
-    // 1. Fetch Metadata Options theo Attraction được chọn
+    const abortControllerRef = useRef(null);
+
+    // --- 1. Lấy danh sách Schema/Versions khả dụng từ Backend ---
+    useEffect(() => {
+        const fetchVersions = async () => {
+            try {
+                const resSchema = await fetch('http://localhost:8000/analysis/versions-schema');
+                if (resSchema.ok) {
+                    const resData = await resSchema.json();
+                    const list = resData.versions || resData || [];
+                    const vIds = list.map(v => typeof v === 'string' ? v : (v.version_id || v.table_name));
+                    if (!vIds.includes('v0_raw')) vIds.unshift('v0_raw');
+                    setAllVersions([...new Set(vIds)]);
+                }
+            } catch (err) {
+                console.warn("Méta-données des versions non disponibles:", err);
+            }
+        };
+
+        fetchVersions();
+    }, []);
+
+    // --- 2. Lấy danh sách Attractions & Columns theo Version và Attraction được chọn ---
     useEffect(() => {
         const fetchMetaOptions = async () => {
             setLoadingOptions(true);
             try {
-                let url = `${API_BASE_URL}/meta/options`;
+                let url = `${API_BASE_URL}/meta/options?version=${selectedVersion}`;
 
-                if (selectedAttraction && selectedAttraction !== 'Toutes') {
-                    url += `?id_attraction=${selectedAttraction}`;
+                if (selectedAttraction && selectedAttraction !== 'ALL') {
+                    url += `&id_attraction=${selectedAttraction}`;
                 } else {
-                    url += `?id_attraction=all`;
+                    url += `&id_attraction=ALL`;
                 }
 
                 const res = await fetch(url);
                 if (res.ok) {
                     const data = await res.json();
 
-                    // 1. Cập nhật danh sách Attractions (chỉ cập nhật nếu chưa có)
+                    // Cập nhật danh sách Attractions
                     if (data.attractions && data.attractions.length > 0) {
-                        const attractionsList = ['Toutes', ...data.attractions.filter(a => a !== 'Toutes')];
-                        setAvailableAttractions(attractionsList);
+                        setAvailableAttractions(data.attractions);
                     }
 
-                    // 2. Cập nhật danh sách Cột (Features) theo attraction vừa chọn
+                    // Cập nhật danh sách Cột (Features)
                     const cols = data.features || [];
                     setAvailableColumns(cols);
 
-                    // Always auto-select the first feature of the newly selected attraction
                     if (cols.length > 0) {
-                        setSelectedColumn(cols[0]); // Tự động chọn cột đầu tiên của attraction mới
+                        if (!selectedColumn || !cols.includes(selectedColumn)) {
+                            setSelectedColumn(cols[0]);
+                        }
                     } else {
                         setSelectedColumn('');
                     }
@@ -78,109 +109,108 @@ export default function TimeSeriesAnalysis() {
         };
 
         fetchMetaOptions();
-    }, [selectedAttraction]);
+    }, [selectedAttraction, selectedVersion]);
 
-    // Đổi Attraction -> Reset ngay cột đang chọn để tránh lỗi khớp dữ liệu
-    const handleAttractionChange = (e) => {
-        const newAttraction = e.target.value;
-        setSelectedAttraction(newAttraction);
+    // --- 3. Lọc danh sách Version phù hợp với Attraction được chọn ---
+    const filteredVersionList = useMemo(() => {
+        if (!selectedAttraction || selectedAttraction === 'ALL') {
+            return allVersions;
+        }
+        const attrUpper = selectedAttraction.toUpperCase();
+        const filtered = allVersions.filter(v => {
+            if (v === 'v0_raw') return true;
+            return v.toUpperCase().includes(attrUpper);
+        });
+        return filtered.length > 0 ? filtered : ['v0_raw'];
+    }, [allVersions, selectedAttraction]);
+
+    // Xử lý thay đổi Attraction
+    const handleAttractionChange = (newAttr) => {
+        setSelectedAttraction(newAttr);
         setSelectedColumn('');
+
+        let availableForNewAttr = allVersions;
+        if (newAttr && newAttr !== 'ALL') {
+            const attrUpper = newAttr.toUpperCase();
+            availableForNewAttr = allVersions.filter(v => v === 'v0_raw' || v.toUpperCase().includes(attrUpper));
+        }
+
+        if (!availableForNewAttr.includes(selectedVersion)) {
+            setSelectedVersion(availableForNewAttr[0] || 'v0_raw');
+        }
     };
 
-    // 2. Fetch Data Function
+    // --- 4. Fetch Data Thực thi tính toán ---
     const fetchData = async () => {
         if (!selectedColumn) return;
 
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
         setLoading(true);
+        setError(null);
+
         try {
             const params = new URLSearchParams({
-                version,
+                version: selectedVersion,
                 col_name: selectedColumn,
             });
 
-            // Xử lý tham số id_attraction khi gửi lên Backend
-            if (selectedAttraction === 'Toutes') {
-                params.append('id_attraction', 'all'); // Bạn có thể sửa 'all' thành '' nếu Backend chấp nhận để trống
-            } else if (selectedAttraction) {
+            if (selectedAttraction && selectedAttraction !== 'ALL') {
                 params.append('id_attraction', selectedAttraction);
+            } else {
+                params.append('id_attraction', 'ALL');
             }
 
             if (activeTab === 'stationarity') {
                 params.append('method', statMethod);
-                const res = await fetch(`${API_BASE_URL}/stationarity?${params.toString()}`);
+                const res = await fetch(`${API_BASE_URL}/stationarity?${params.toString()}`, { signal: controller.signal });
+                if (!res.ok) throw new Error((await res.json()).detail || 'Erreur lors du calcul de la stationnarité');
                 const data = await res.json();
                 setStatResult(data);
             } else if (activeTab === 'decomposition') {
                 params.append('model_type', decompModel);
                 params.append('period', decompPeriod.toString());
-                const res = await fetch(`${API_BASE_URL}/decomposition?${params.toString()}`);
+                const res = await fetch(`${API_BASE_URL}/decomposition?${params.toString()}`, { signal: controller.signal });
+                if (!res.ok) throw new Error((await res.json()).detail || 'Erreur lors de la décomposition');
                 const data = await res.json();
                 setDecompResult(data);
             } else if (activeTab === 'acf-pacf') {
                 params.append('plot_type', plotType);
                 params.append('lags', lags.toString());
-                const res = await fetch(`${API_BASE_URL}/acf-pacf?${params.toString()}`);
+                const res = await fetch(`${API_BASE_URL}/acf-pacf?${params.toString()}`, { signal: controller.signal });
+                if (!res.ok) throw new Error((await res.json()).detail || 'Erreur lors du calcul ACF/PACF');
                 const data = await res.json();
                 setAcfResult(data);
             }
         } catch (err) {
-            console.error('Erreur lors du chargement des données:', err);
+            if (err.name !== 'AbortError') {
+                setError(err.message || 'Impossible de charger les données analytiques');
+            }
         } finally {
-            setLoading(false);
+            if (!controller.signal.aborted) setLoading(false);
         }
     };
 
-    // Tự động tính toán khi chuyển Tab
+    // Tự động tính toán khi chuyển Tab hoặc đổi cấu hình chính
     useEffect(() => {
         if (!loadingOptions && selectedColumn) {
             fetchData();
         }
-    }, [activeTab]);
+    }, [activeTab, selectedVersion, selectedColumn, statMethod, decompModel, decompPeriod, plotType, lags]);
 
+    // --- Styles đồng bộ theo SingleColumn & DataAnalysis ---
     const styles = {
         wrapper: { minHeight: '100vh', backgroundColor: '#f8fafc', padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' },
-        container: { maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' },
+        container: { maxWidth: '1280px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' },
         card: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)', boxSizing: 'border-box' },
-        headerCard: {
-            backgroundColor: '#ffffff',
-            borderRadius: '24px',
-            border: '1px solid #e2e8f0',
-            padding: '16px 24px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '16px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-            minHeight: '80px',
-            boxSizing: 'border-box',
-            flexWrap: 'wrap'
-        },
-        selectBox: {
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            backgroundColor: '#f8fafc',
-            border: '1px solid #e2e8f0',
-            padding: '8px 14px',
-            borderRadius: '16px',
-            fontSize: '12px',
-            minWidth: '180px',
-            maxWidth: '240px',
-            flexShrink: 0
-        },
-        select: {
-            border: 'none',
-            background: 'transparent',
-            fontWeight: 'bold',
-            color: '#0f172a',
-            outline: 'none',
-            cursor: 'pointer',
-            appearance: 'none',
-            width: '100%',
-            textOverflow: 'ellipsis',
-            overflow: 'hidden',
-            whiteSpace: 'nowrap'
-        },
+        headerCard: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' },
+        topBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' },
+        selectBox: { display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '8px 14px', borderRadius: '16px', fontSize: '12px', minWidth: '180px' },
+        select: { border: 'none', background: 'transparent', fontWeight: 'bold', color: '#0f172a', outline: 'none', cursor: 'pointer', appearance: 'none', width: '100%', lineHeight: '1' },
         iconBg: (bg, color) => ({ backgroundColor: bg, color: color, padding: '10px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }),
         tabBtn: (isActive) => ({
             padding: '8px 16px',
@@ -250,94 +280,130 @@ export default function TimeSeriesAnalysis() {
             </style>
             <div style={styles.container}>
 
-                {/* 1. TOP HEADER & FILTER CARD */}
+                {/* 1. EN-TÊTE & FILTRES */}
                 <div style={styles.headerCard}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flex: '1 1 auto', minWidth: 0 }}>
-                        <div style={styles.iconBg('#eff6ff', '#2563eb')}>
-                            <Activity size={24} />
+                    <div style={styles.topBar}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            <div style={styles.iconBg('#eff6ff', '#2563eb')}>
+                                <Activity size={24} />
+                            </div>
+                            <div>
+                                <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', lineHeight: '1.2' }}>
+                                    Profilage et Analyse des Séries Temporelles
+                                </h1>
+                                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94a3b8', fontWeight: '600', lineHeight: '1.2' }}>
+                                    Variable : <span style={{ color: '#2563eb' }}>{selectedColumn || 'Chargement...'}</span> | Version : <span style={{ color: '#059669' }}>{selectedVersion}</span>
+                                </p>
+                            </div>
                         </div>
-                        <div style={{ minWidth: 0, overflow: 'hidden' }}>
-                            <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.02em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                Profilage et Analyse des Séries Temporelles
-                            </h1>
-                            <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#94a3b8', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                Variable sélectionnée : <span style={{ color: '#2563eb' }}>{selectedColumn || 'Chargement...'}</span>
-                            </p>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                            {/* Dropdown Attraction */}
+                            <div style={styles.selectBox}>
+                                <Filter size={15} color="#94a3b8" />
+                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Attraction :</span>
+                                <select
+                                    value={selectedAttraction}
+                                    onChange={(e) => handleAttractionChange(e.target.value)}
+                                    style={styles.select}
+                                >
+                                    <option value="ALL">Toutes les attractions</option>
+                                    {availableAttractions.map(id => (
+                                        <option key={id} value={id}>
+                                            Attraction {id}
+                                        </option>
+                                    ))}
+                                </select>
+                                <ChevronDown size={14} color="#94a3b8" />
+                            </div>
+
+                            {/* Dropdown Colonne */}
+                            <div style={styles.selectBox}>
+                                <Sliders size={15} color="#94a3b8" />
+                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Colonne :</span>
+                                <select
+                                    value={selectedColumn}
+                                    onChange={(e) => setSelectedColumn(e.target.value)}
+                                    style={styles.select}
+                                    disabled={loadingOptions || availableColumns.length === 0}
+                                >
+                                    {availableColumns.length > 0 ? (
+                                        availableColumns.map(col => <option key={col} value={col}>{col}</option>)
+                                    ) : (
+                                        <option value="">Aucune colonne</option>
+                                    )}
+                                </select>
+                                <ChevronDown size={14} color="#94a3b8" />
+                            </div>
+
+                            <button
+                                onClick={fetchData}
+                                disabled={loading || loadingOptions || !selectedColumn}
+                                style={{
+                                    ...styles.actionBtn,
+                                    backgroundColor: (loading || !selectedColumn) ? '#93c5fd' : '#2563eb',
+                                    cursor: (loading || !selectedColumn) ? 'not-allowed' : 'pointer'
+                                }}
+                            >
+                                {loading ? (
+                                    <>
+                                        <Loader2 size={14} className="spinner" />
+                                        <span>Calcul...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Play size={14} />
+                                        <span>Exécuter</span>
+                                    </>
+                                )}
+                            </button>
                         </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', flexShrink: 0 }}>
-                        {/* Dropdown Version */}
-                        <div style={styles.selectBox}>
-                            <Layers size={15} color="#94a3b8" style={{ flexShrink: 0 }} />
-                            <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Version :</span>
-                            <select value={version} onChange={(e) => setVersion(e.target.value)} style={styles.select}>
-                                <option value="v1">Version 1 (Par défaut)</option>
-                                <option value="v2">Version 2</option>
-                            </select>
-                            <ChevronDown size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
+                    {/* STEPPER CHỌN VERSION ĐỒNG BỘ THEO SINGLE COLUMN */}
+                    <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '20px 24px', width: '100%', boxSizing: 'border-box' }}>
+                        <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
+                            Choisissez la version des données pour l'analyse temporelle
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                            {filteredVersionList.map((ver, index) => {
+                                const isSelected = selectedVersion === ver;
+                                const isLast = index === filteredVersionList.length - 1;
+                                const verColor = getDynamicColor(index, filteredVersionList.length);
 
-                        {/* Dropdown Attraction */}
-                        <div style={styles.selectBox}>
-                            <Filter size={15} color="#94a3b8" style={{ flexShrink: 0 }} />
-                            <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Attraction :</span>
-                            <select
-                                value={selectedAttraction}
-                                onChange={handleAttractionChange}
-                                style={styles.select}
-                            >
-                                {availableAttractions.map(id => (
-                                    <option key={id} value={id}>
-                                        {id === 'Toutes' ? 'Toutes les attractions' : id}
-                                    </option>
-                                ))}
-                            </select>
-                            <ChevronDown size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
+                                return (
+                                    <React.Fragment key={ver}>
+                                        <div
+                                            onClick={() => setSelectedVersion(ver)}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}
+                                        >
+                                            <div style={{
+                                                width: '28px', height: '28px', borderRadius: '50%',
+                                                backgroundColor: isSelected ? verColor : '#94a3b8',
+                                                color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                fontSize: '12px', fontWeight: '700', transition: 'all 0.2s ease',
+                                                boxShadow: isSelected ? `0 0 0 4px ${verColor}25` : 'none', flexShrink: 0
+                                            }}>
+                                                {index + 1}
+                                            </div>
+                                            <span style={{ fontSize: '13px', fontWeight: isSelected ? '700' : '500', color: isSelected ? '#1e293b' : '#64748b', whiteSpace: 'nowrap' }}>
+                                                {ver}
+                                            </span>
+                                        </div>
+                                        {!isLast && <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0', margin: '0 12px', minWidth: '16px' }} />}
+                                    </React.Fragment>
+                                );
+                            })}
                         </div>
-
-                        {/* Dropdown Colonne */}
-                        <div style={styles.selectBox}>
-                            <Sliders size={15} color="#94a3b8" style={{ flexShrink: 0 }} />
-                            <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Colonne :</span>
-                            <select
-                                value={selectedColumn}
-                                onChange={(e) => setSelectedColumn(e.target.value)}
-                                style={styles.select}
-                                disabled={loadingOptions || availableColumns.length === 0}
-                            >
-                                {availableColumns.length > 0 ? (
-                                    availableColumns.map(col => <option key={col} value={col}>{col}</option>)
-                                ) : (
-                                    <option value="">Aucune colonne</option>
-                                )}
-                            </select>
-                            <ChevronDown size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
-                        </div>
-
-                        <button
-                            onClick={fetchData}
-                            disabled={loading || loadingOptions || !selectedColumn}
-                            style={{
-                                ...styles.actionBtn,
-                                backgroundColor: (loading || !selectedColumn) ? '#93c5fd' : '#2563eb',
-                                cursor: (loading || !selectedColumn) ? 'not-allowed' : 'pointer'
-                            }}
-                        >
-                            {loading ? (
-                                <>
-                                    <Loader2 size={14} className="spinner" />
-                                    <span>Calcul...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Play size={14} />
-                                    <span>Exécuter</span>
-                                </>
-                            )}
-                        </button>
                     </div>
                 </div>
+
+                {error && (
+                    <div style={{ padding: '16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '16px', color: '#991b1b', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <AlertTriangle size={20} color="#dc2626" />
+                        <span>{error}</span>
+                    </div>
+                )}
 
                 {/* 2. TAB NAVIGATION */}
                 <div style={{ display: 'flex', backgroundColor: '#f1f5f9', padding: '4px', borderRadius: '16px', gap: '4px', width: 'fit-content' }}>

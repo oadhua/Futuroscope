@@ -7,9 +7,23 @@ from app.modules.data_pipeline.utils import format_alias
 
 
 def get_dynamic_gathering_query(
-    engine: Engine, id_attraction: Optional[str] = None
+    engine: Engine,
+    id_attraction: Optional[str] = None,
+    version: Optional[str] = "v0_raw",  # Bổ sung tham số version
 ) -> str:
-    """Tự động tạo câu SQL Pivot ghép id_attraction vào đầu tên cột năng lượng."""
+    """Tự động tạo câu SQL Pivot ghép id_attraction vào đầu tên cột năng lượng, có hỗ trợ versioning."""
+
+    # Xác định tên bảng dữ liệu cơ sở theo version
+    # Ví dụ: nếu version = "v0_raw" -> bảng gốc 'fact_attraction_hourly'
+    # Nếu version dạng khác -> tự động map sang bảng tương ứng
+    table_fact_attraction = "fact_attraction_hourly"
+    table_fact_elec = "fact_elec_hourly"
+    table_fact_ec = "fact_ec_hourly"
+
+    if version and version != "v0_raw":
+        # Có thể tùy chỉnh logic prefix/suffix bảng theo hệ thống của bạn tại đây
+        table_fact_attraction = f"fact_attraction_hourly_{version}"
+
     has_filter = (
         id_attraction is not None
         and str(id_attraction).strip() != ""
@@ -28,7 +42,7 @@ def get_dynamic_gathering_query(
         try:
             df_elec = pd.read_sql(
                 text(
-                    f"SELECT DISTINCT id_attraction, metric_name FROM fact_elec_hourly {where_clause}"
+                    f"SELECT DISTINCT id_attraction, metric_name FROM {table_fact_elec} {where_clause}"
                 ),
                 conn,
             )
@@ -39,7 +53,7 @@ def get_dynamic_gathering_query(
         try:
             df_ec = pd.read_sql(
                 text(
-                    f"SELECT DISTINCT id_attraction, metric_name FROM fact_ec_hourly {where_clause}"
+                    f"SELECT DISTINCT id_attraction, metric_name FROM {table_fact_ec} {where_clause}"
                 ),
                 conn,
             )
@@ -92,7 +106,7 @@ def get_dynamic_gathering_query(
             temps_id,
             id_attraction,
             {elec_pivot_cols}
-        FROM fact_elec_hourly
+        FROM {table_fact_elec}
         {cte_where}
         GROUP BY temps_id, id_attraction
     ),
@@ -101,7 +115,7 @@ def get_dynamic_gathering_query(
             temps_id,
             id_attraction,
             {ec_pivot_cols}
-        FROM fact_ec_hourly
+        FROM {table_fact_ec}
         {cte_where}
         GROUP BY temps_id, id_attraction
     )
@@ -137,7 +151,7 @@ def get_dynamic_gathering_query(
         t.jour,
         t.mois,
         t.annee
-    FROM fact_attraction_hourly f
+    FROM {table_fact_attraction} f
     LEFT JOIN dim_temps t ON f.temps_id = t.temps_id
     LEFT JOIN dim_weather w ON f.temps_id = w.temps_id
     LEFT JOIN dim_horaire h ON CAST(f.datetime AS DATE) = h.date
