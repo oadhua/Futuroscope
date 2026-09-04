@@ -59,6 +59,7 @@ class DimTemps(Base):
     date = Column(Date, nullable=False)
     annee = Column(Integer, nullable=False)
     mois = Column(Integer, nullable=False)
+    semaine = Column(Integer, nullable=False)
     jour = Column(Integer, nullable=False)
     heure = Column(Integer, nullable=False)
     jour_semaine = Column(Integer, nullable=False)

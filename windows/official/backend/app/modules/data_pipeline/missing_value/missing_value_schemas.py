@@ -49,6 +49,7 @@ class VersionMetadataResponse(BaseModel):
     step_type: str
     method: str
     method_label_fr: str
+    action: Optional[str] = None
     target_columns: List[str]
     parameters: Dict[str, Any]
     stats: NullStats

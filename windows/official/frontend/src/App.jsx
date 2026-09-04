@@ -11,11 +11,12 @@ import {
   Sparkles,
   Settings,
   ChevronRight,
-  Clock
+  Clock,
+  Zap,
+  PlaySquare
 } from 'lucide-react';
 
-import DataPipelineLayout from './modules/data_pipeline/DataPipelineLayout';
-// Import 3 sub-modules thuộc Data Pipeline
+// Imports Data Pipeline
 import DataUploadPage from './modules/data_pipeline/DataUploadPage/DataUploadPage';
 import InitialProfiling from './modules/data_pipeline/InitialProfiling/InitialProfiling';
 import DataAnalysis from './modules/data_pipeline/DataAnalysis/DataAnalysis';
@@ -24,6 +25,15 @@ import MultiColumn from './modules/data_pipeline/MultiColumn/MultiColumn';
 import TimeSeriesAnalysis from './modules/data_pipeline/TimeSeriesAnalysis/TimeSeriesAnalysis';
 import MissingValue from './modules/data_pipeline/MissingValue/MissingValue';
 import Outliers from './modules/data_pipeline/Outliers/Outliers';
+import Scaling from './modules/data_pipeline/Scaling/Scaling';
+import Encoding from './modules/data_pipeline/Encoding/Encode';
+import Duplicate from './modules/data_pipeline/Duplicated/Duplicated';
+import TimeSeriesTrans from './modules/data_pipeline/TimeSeriesTrans/TimeSeriesTrans';
+import Trace from './modules/data_pipeline/Trace/Trace';
+import FeatureSelection from './modules/data_pipeline/FeatureSelection/FeatureSelection';
+
+// Import ML Module
+import MLTrainingDashboard from './modules/ml_forecasting/Training/Training';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('pipeline');
@@ -42,14 +52,21 @@ export default function App() {
         { id: 'timeseriesAnalysis', label: '1.6 Time Series Analysis', icon: <Clock size={16} /> },
         { id: 'missingValue', label: '1.7 Missing Value Imputation', icon: <Activity size={16} /> },
         { id: 'outliers', label: '1.8 Outliers Imputation', icon: <Activity size={16} /> },
+        { id: 'scaling', label: '1.9 Scaling', icon: <Activity size={16} /> },
+        { id: 'encoding', label: '1.10 Encoding', icon: <Activity size={16} /> },
+        { id: 'duplicated', label: '1.11 Duplicated Data Removal', icon: <Activity size={16} /> },
+        { id: 'timeSeriesTrans', label: '1.12 Time Series Transformation', icon: <Activity size={16} /> },
+        { id: 'trace', label: '1.13 Traceability', icon: <Activity size={16} /> },
+        { id: 'featureSelection', label: '1.14 Feature Selection', icon: <Activity size={16} /> }
       ]
     },
     ml: {
       title: 'ML Forecasting',
       icon: <BrainCircuit size={18} />,
       subTabs: [
-        { id: 'visitor', label: '2.1 Visitor Forecast', icon: <Activity size={16} /> },
-        { id: 'energy', label: '2.2 Energy Load Forecast', icon: <Cpu size={16} /> },
+        { id: 'training', label: '2.1 Model Training & Studio', icon: <PlaySquare size={16} /> },
+        { id: 'visitor', label: '2.2 Visitor Forecast', icon: <Activity size={16} /> },
+        { id: 'energy', label: '2.3 Energy Load Forecast', icon: <Zap size={16} /> },
       ]
     },
     hvac: {
@@ -77,9 +94,16 @@ export default function App() {
       if (activeSubTab === 'timeseriesAnalysis') return <TimeSeriesAnalysis />;
       if (activeSubTab === 'missingValue') return <MissingValue />;
       if (activeSubTab === 'outliers') return <Outliers />;
+      if (activeSubTab === 'scaling') return <Scaling />;
+      if (activeSubTab === 'encoding') return <Encoding />;
+      if (activeSubTab === 'duplicated') return <Duplicate />;
+      if (activeSubTab === 'timeSeriesTrans') return <TimeSeriesTrans />;
+      if (activeSubTab === 'trace') return <Trace />;
+      if (activeSubTab === 'featureSelection') return <FeatureSelection />;
     }
 
     if (activeTab === 'ml') {
+      if (activeSubTab === 'training') return <MLTrainingDashboard />;
       if (activeSubTab === 'visitor') return <PlaceholderContent title="Visitor Attendance Forecasting Model" />;
       if (activeSubTab === 'energy') return <PlaceholderContent title="Building Energy Consumption Forecasting" />;
     }

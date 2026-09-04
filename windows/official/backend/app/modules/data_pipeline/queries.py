@@ -150,6 +150,7 @@ def get_dynamic_gathering_query(
         t.heure,
         t.jour,
         t.mois,
+        t.semaine,
         t.annee
     FROM {table_fact_attraction} f
     LEFT JOIN dim_temps t ON f.temps_id = t.temps_id

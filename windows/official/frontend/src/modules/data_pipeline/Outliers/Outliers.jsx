@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import OutliersModule from '../Outliers/components/Outliers';
+import OutliersModule from './components/Outliers';
 
 export default function DataUploadPage() {
     const [selectedTable, setSelectedTable] = useState("fact_attraction_hourly");

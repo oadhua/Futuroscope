@@ -1,4 +1,6 @@
 import asyncio
+import signal
+import sys
 import time
 import numpy as np
 import pandas as pd
@@ -11,8 +13,7 @@ from scipy.optimize import minimize
 PANORAMA_URL = "opc.tcp://127.0.0.1:4840/freeopcua/server/"
 URI_PANORAMA = "http://futuroscope.hvac.panorama"
 
-# Amplitude maximale de variation de la consigne par pas de calcul (°C)
-DELTA_T_MAX = 3.0  # Modifier à 1.5 si vous souhaitez des variations plus douces
+DELTA_T_MAX = 3.0
 
 ATTRACTION_CONFIGS = {
     "H07": {
@@ -20,8 +21,8 @@ ATTRACTION_CONFIGS = {
         "p_froid_tot": 410.0,
         "p_chaud_tot": 285.0,
         "p_elec_tot": 32.5,
-        "cop_chaud": 3.2,  # COP vận hành mùa đông (Chauffage)
-        "cop_froid": 3.8,  # EER/COP vận hành mùa hè (Refroidissement)
+        "cop_chaud": 3.2,
+        "cop_froid": 3.8,
         "ua_val": 6.5,
         "cb_val": 25.0,
         "e_standby": 4.0,
@@ -34,8 +35,8 @@ ATTRACTION_CONFIGS = {
         "p_froid_tot": 300.0,
         "p_chaud_tot": 325.0,
         "p_elec_tot": 30.2,
-        "cop_chaud": 3.0,  # COP vận hành mùa đông (Chauffage)
-        "cop_froid": 3.5,  # EER/COP vận hành mùa hè (Refroidissement)
+        "cop_chaud": 3.0,
+        "cop_froid": 3.5,
         "ua_val": 4.5,
         "cb_val": 18.0,
         "e_standby": 3.5,
@@ -47,6 +48,7 @@ ATTRACTION_CONFIGS = {
 
 
 class OptimiseurConsoHVAC:
+
     def __init__(self, config):
         self.config = config
         self.cop_chaud = config.get("cop_chaud", 3.0)
@@ -60,11 +62,11 @@ class OptimiseurConsoHVAC:
         """Définit la température de confort cible globale selon la saison."""
         if month in [11, 12, 1, 2, 3]:
             saison = "hiver"
-            t_comf = 19.0  # Cible de confort hivernale
+            t_comf = 19.0
             cop_active = self.cop_chaud
         elif month in [5, 6, 7, 8, 9]:
             saison = "ete"
-            t_comf = 24.0  # Cible de confort estivale idéale
+            t_comf = 24.0
             cop_active = self.cop_froid
         else:
             saison = "intersaison"
@@ -103,15 +105,23 @@ class OptimiseurConsoHVAC:
         )
         saison = p["saison"]
         base_load = self.e_standby_base * 1.2
+        current_hour = int(row.get("hour", 0))
+
+        # Tải nhiệt tỏa ra từ du khách (~90W/người)
+        body_heat_kw = (visitors * 0.09) / 1000.0 if saison == "hiver" else 0.0
+
+        # Phân định đúng Peak Shaving chiều tối (17h-20h)
+        is_evening_peak = (17 <= current_hour < 20) and (tariff > 1.2)
 
         # -------------------------------------------------------------
-        # 1. ATTRACTION FERMÉE (Hors exploitation)
+        # 1. ATTRACTION FERMÉE (Đang đóng cửa)
         # -------------------------------------------------------------
         if operation == 0 or is_open == 0:
             decay_factor = np.exp(-0.4 * hours_closed)
             if saison == "hiver":
                 base_hg = max(self.e_standby_base, baseline_val * 0.15)
-                delta_q = p["UA"] * (T_curr - p["T_comf"]) + p["C_b"] * (
+                # Dynamic Hors-gel (15°C)
+                delta_q = p["UA"] * (T_curr - 15.0) + p["C_b"] * (
                     T_curr - T_prev
                 )
                 q_opt = (
@@ -143,57 +153,89 @@ class OptimiseurConsoHVAC:
                 )
 
         # -------------------------------------------------------------
-        # 2. ATTRACTION EN EXPLOITATION
+        # 2. ATTRACTION EN EXPLOITATION (Vận hành mở cửa)
         # -------------------------------------------------------------
         if saison == "hiver":
             q_pred = float(row.get("ec_value_pred", baseline_val))
-            delta_q = p["UA"] * (T_curr - p["T_comf"]) + p["C_b"] * (T_curr - T_prev)
-            q_opt = (
-                max(base_load, (q_pred + delta_q) * 0.3)
-                if is_closing_soon
-                else max(base_load, q_pred + delta_q)
+
+            # Mô hình Cân bằng năng lượng RC + Tải nhiệt du khách
+            delta_q = (
+                p["UA"] * (T_curr - p["T_comf"])
+                + p["C_b"] * (T_curr - T_prev)
+                - body_heat_kw
             )
+
+            # Chỉ tiết chế 25% công suất khi rơi vào khung Peak chiều tối hoặc sắp đóng cửa
+            cap_factor = 0.75 if is_evening_peak else 1.0
+            if is_closing_soon:
+                cap_factor = 0.3
+
+            q_opt = max(base_load, (q_pred + delta_q) * cap_factor)
             energy_pred, energy_opt, unit = q_pred, q_opt, "kWh_th"
             cost_base = energy_opt * tariff
-            etat_cta = "EARLY_STOP" if is_closing_soon else "ON"
+
+            if is_evening_peak:
+                etat_cta = "PEAK_SHAVING"
+            elif tariff > 1.2:
+                etat_cta = "HIGH_TARIFF"
+            else:
+                etat_cta = "ON"
         else:
             e_pred_tot = float(row.get("elec_1_pred", baseline_val))
             e_hvac_baseline = e_pred_tot * self.ratio_hvac
             e_non_hvac = e_pred_tot * (1.0 - self.ratio_hvac)
 
-            # Bilan thermique RC appliqué au chiller avec COP_froid
-            delta_e_hvac = (p["UA"] / p["COP"]) * (p["T_comf"] - T_curr) + (
-                p["C_b"] / p["COP"]
-            ) * (T_prev - T_curr)
-
-            e_hvac_opt = (
-                max(base_load, (e_hvac_baseline + delta_e_hvac) * 0.3)
-                if is_closing_soon
-                else max(base_load, e_hvac_baseline + delta_e_hvac)
+            # Mùa hè: Du khách tỏa nhiệt làm tăng tải làm lạnh
+            body_heat_cooling = (visitors * 0.1) / 1000.0 / p["COP"]
+            delta_e_hvac = (
+                (p["UA"] / p["COP"]) * (p["T_comf"] - T_curr)
+                + (p["C_b"] / p["COP"]) * (T_prev - T_curr)
+                + body_heat_cooling
             )
 
+            cap_factor = 0.80 if is_evening_peak else 1.0
+            if is_closing_soon:
+                cap_factor = 0.3
+
+            e_hvac_opt = max(
+                base_load, (e_hvac_baseline + delta_e_hvac) * cap_factor
+            )
             energy_pred = e_pred_tot
             energy_opt = e_non_hvac + e_hvac_opt
             unit = "kWh_el"
             cost_base = energy_opt * tariff
-            etat_cta = "EARLY_STOP" if is_closing_soon else "ON"
 
-        # Pénalité de confort centrée sur T_comf
-        comfort_diff = (
-            max(0.0, 18.0 - T_curr)
-            if saison == "hiver"
-            else max(0.0, T_curr - p["T_comf"])
-        )
+            if is_evening_peak:
+                etat_cta = "PEAK_SHAVING"
+            elif tariff > 1.2:
+                etat_cta = "HIGH_TARIFF"
+            else:
+                etat_cta = "ON"
+
+        # -------------------------------------------------------------
+        # 3. PHẠT TIỆN NGHI VÀ MƯỢT MÀ (COMFORT & SMOOTH PENALTY)
+        # -------------------------------------------------------------
+        if saison == "hiver":
+            comfort_diff = max(0.0, 18.0 - T_curr)
+        else:
+            comfort_diff = max(0.0, T_curr - 24.5)
+
         scale_visitor = max(1.0, visitors / 50.0)
-        w_comfort_eff = p["w_comfort"] * 0.20 if is_closing_soon else p["w_comfort"]
-        comfort_penalty = w_comfort_eff * scale_visitor * (comfort_diff**4)
+        w_comfort_eff = (
+            p["w_comfort"] * 0.20 if is_closing_soon else p["w_comfort"]
+        )
+        comfort_penalty = w_comfort_eff * scale_visitor * (comfort_diff**3)
 
         smooth_penalty = p["w_smooth"] * ((T_curr - T_prev) ** 2)
         scada_penalty = (
-            p["w_scada"] * ((T_curr - T_scada_prev) ** 2) if T_scada_prev else 0.0
+            p["w_scada"] * ((T_curr - T_scada_prev) ** 2)
+            if T_scada_prev
+            else 0.0
         )
 
-        total_cost = cost_base + comfort_penalty + smooth_penalty + scada_penalty
+        total_cost = (
+            cost_base + comfort_penalty + smooth_penalty + scada_penalty
+        )
         return (
             total_cost,
             energy_pred,
@@ -208,13 +250,18 @@ class OptimiseurConsoHVAC:
         p = self._obtenir_config_saison(month)
 
         tariffs = [
-            1.5 if (8 <= h < 12) or (17 <= h < 20) else 1.0 for h in df_24h["hour"]
+            1.5 if (8 <= h < 12) or (17 <= h < 20) else 1.0
+            for h in df_24h["hour"]
         ]
 
-        col_baseline = "ec_value_pred" if p["saison"] == "hiver" else "elec_1_pred"
+        col_baseline = (
+            "ec_value_pred" if p["saison"] == "hiver" else "elec_1_pred"
+        )
         if col_baseline not in df_24h.columns:
             col_baseline = (
-                "elec_1_pred" if "elec_1_pred" in df_24h.columns else "ec_value_pred"
+                "elec_1_pred"
+                if "elec_1_pred" in df_24h.columns
+                else "ec_value_pred"
             )
 
         baselines = df_24h[col_baseline].values
@@ -224,12 +271,18 @@ class OptimiseurConsoHVAC:
         c_closed = 0
         for idx in range(n_steps):
             row = df_24h.iloc[idx]
-            if float(row.get("operation", 1.0)) == 0 or int(row.get("is_open", 0)) == 0:
+            if (
+                float(row.get("operation", 1.0)) == 0
+                or int(row.get("is_open", 0)) == 0
+            ):
                 c_closed += 1
             else:
                 c_closed = 0
             hours_closed_list.append(c_closed)
 
+        # -------------------------------------------------------------
+        # 1. KHỞI TẠO BOUNDS VÀ X0 TỐI ƯU VỚI TÍNH NĂNG NẠP NHIỆT (PRE-CHARGING)
+        # -------------------------------------------------------------
         bounds, x0 = [], []
         PRE_HOURS = 2
 
@@ -252,11 +305,11 @@ class OptimiseurConsoHVAC:
             if op == 0 or is_op == 0:
                 if will_open_soon:
                     if p["saison"] == "hiver":
-                        bounds.append((15.0, 19.0))
-                        x0.append(17.0)
+                        bounds.append((17.5, 21.0))
+                        x0.append(20.0)
                     else:
-                        bounds.append((22.0, 26.0))
-                        x0.append(24.5)
+                        bounds.append((20.0, 23.5))
+                        x0.append(21.5)
                 else:
                     if p["saison"] == "hiver":
                         bounds.append((15.0, 15.0))
@@ -265,28 +318,16 @@ class OptimiseurConsoHVAC:
                         bounds.append((26.0, 30.0))
                         x0.append(28.0)
             else:
-                t_int_ref = (
-                    T_scada_prev
-                    if (T_scada_prev is not None and T_scada_prev > 10.0)
-                    else p["T_comf"]
-                )
-
                 if p["saison"] == "hiver":
-                    b_min = max(17.0, t_int_ref - DELTA_T_MAX)
-                    b_max = min(21.0, t_int_ref + DELTA_T_MAX)
+                    bounds.append((17.5, 19.5))
+                    x0.append(18.5)
                 else:
-                    b_min = max(22.0, t_int_ref - DELTA_T_MAX)
-                    b_max = min(26.0, t_int_ref + DELTA_T_MAX)
+                    bounds.append((22.5, 25.0))
+                    x0.append(24.0)
 
-                if b_min > b_max:
-                    b_min, b_max = (
-                        (18.0, 20.0) if p["saison"] == "hiver" else (23.0, 25.0)
-                    )
-
-                x0_val = np.clip(t_int_ref, b_min, b_max)
-                bounds.append((b_min, b_max))
-                x0.append(x0_val)
-
+        # -------------------------------------------------------------
+        # 2. HÀM MỤC TIÊU TỐI ƯU HÓA MPC
+        # -------------------------------------------------------------
         def objective(T_setpoints):
             total_obj = 0.0
             for t in range(n_steps):
@@ -297,29 +338,50 @@ class OptimiseurConsoHVAC:
                     else (T_setpoints[t - 1] if t > 0 else T_curr)
                 )
 
+                row = df_24h.iloc[t]
+                op = float(row.get("operation", 1.0))
+                is_op = int(row.get("is_open", 0))
+
+                is_closing_soon = False
+                if t + 1 < n_steps:
+                    next_row = df_24h.iloc[t + 1]
+                    if (
+                        float(next_row.get("operation", 1.0)) == 0
+                        or int(next_row.get("is_open", 0)) == 0
+                    ):
+                        is_closing_soon = True
+
                 cost, _, _, _, _, _ = self._cout_horaire(
                     T_curr,
                     T_prev,
-                    df_24h.iloc[t],
+                    row,
                     baselines[t],
                     tariffs[t],
                     p,
                     hours_closed=hours_closed_list[t],
+                    is_closing_soon=is_closing_soon,
                 )
 
-                smooth_penalty = p["w_smooth"] * ((T_curr - T_prev) ** 2)
+                w_smooth_eff = (
+                    0.05 if (op == 0 or is_op == 0) else p["w_smooth"]
+                )
+                smooth_penalty = w_smooth_eff * ((T_curr - T_prev) ** 2)
 
                 if t + 1 < n_steps:
                     next_row = df_24h.iloc[t + 1]
                     if (
                         float(next_row.get("operation", 1.0)) > 0
                         and int(next_row.get("is_open", 0)) == 1
-                        and (
-                            float(df_24h.iloc[t].get("operation", 1.0)) == 0
-                            or int(df_24h.iloc[t].get("is_open", 0)) == 0
-                        )
+                        and (op == 0 or is_op == 0)
                     ):
-                        arrival_penalty = 50.0 * (max(0.0, p["T_comf"] - T_curr) ** 2)
+                        if p["saison"] == "hiver":
+                            arrival_penalty = 30.0 * (
+                                max(0.0, 19.0 - T_curr) ** 2
+                            )
+                        else:
+                            arrival_penalty = 30.0 * (
+                                max(0.0, T_curr - 23.5) ** 2
+                            )
                         cost += arrival_penalty
 
                 total_obj += cost + smooth_penalty
@@ -345,6 +407,15 @@ class OptimiseurConsoHVAC:
                 else (opt_sp[t - 1] if t > 0 else T_curr)
             )
 
+            is_closing_soon = False
+            if t + 1 < n_steps:
+                next_row = df_24h.iloc[t + 1]
+                if (
+                    float(next_row.get("operation", 1.0)) == 0
+                    or int(next_row.get("is_open", 0)) == 0
+                ):
+                    is_closing_soon = True
+
             _, e_pred, e_opt, e_saved, unit_res, etat_cta = self._cout_horaire(
                 T_curr,
                 T_prev,
@@ -353,13 +424,16 @@ class OptimiseurConsoHVAC:
                 tariffs[t],
                 p,
                 hours_closed=hours_closed_list[t],
+                is_closing_soon=is_closing_soon,
             )
 
             row = df_24h.iloc[t]
             if float(row.get("operation", 1.0)) == 0 and t + 1 < n_steps:
                 if float(df_24h.iloc[t + 1].get("operation", 1.0)) > 0:
                     etat_cta = (
-                        "PRE_HEATING" if p["saison"] == "hiver" else "PRE_COOLING"
+                        "PRE_HEATING"
+                        if p["saison"] == "hiver"
+                        else "PRE_COOLING"
                     )
 
             e_pred_list.append(round(float(e_pred), 2))
@@ -403,10 +477,14 @@ def load_and_merge_predictions(file_elec, file_thermal):
     if "hour" not in df_merged.columns:
         df_merged["hour"] = df_merged["date"].dt.hour
 
-    if "elec_1_pred" not in df_merged.columns and "ec_value_pred" in df_merged.columns:
+    if (
+        "elec_1_pred" not in df_merged.columns
+        and "ec_value_pred" in df_merged.columns
+    ):
         df_merged["elec_1_pred"] = df_merged["ec_value_pred"]
     elif (
-        "ec_value_pred" not in df_merged.columns and "elec_1_pred" in df_merged.columns
+        "ec_value_pred" not in df_merged.columns
+        and "elec_1_pred" in df_merged.columns
     ):
         df_merged["ec_value_pred"] = df_merged["elec_1_pred"]
 
@@ -469,9 +547,15 @@ async def traiter_attraction(attr_id, config, client, idx):
         attr_id, curr_temp, is_open, operation, visitors, scada_time
     )
 
-    opt_sp, e_pred, e_opt, e_saved, unit, cta_st, saison = optimizer.optimiser_bloc_24h(
-        df_24h, T_scada_prev=t_scada_prev
-    )
+    (
+        opt_sp,
+        e_pred,
+        e_opt,
+        e_saved,
+        unit,
+        cta_st,
+        saison,
+    ) = optimizer.optimiser_bloc_24h(df_24h, T_scada_prev=t_scada_prev)
 
     target_setpoint = float(opt_sp[0])
     current_cta_state = cta_st[0]
@@ -493,7 +577,9 @@ async def traiter_attraction(attr_id, config, client, idx):
     elif saison == "ete":
         sp_chaud, sp_froid = 12.0, target_setpoint
     else:
-        sp_chaud, sp_froid = min(target_setpoint, 19.5), max(target_setpoint, 23.5)
+        sp_chaud, sp_froid = min(target_setpoint, 19.5), max(
+            target_setpoint, 23.5
+        )
 
     await node_chaud.write_value(sp_chaud)
     await node_froid.write_value(sp_froid)
@@ -506,62 +592,76 @@ async def traiter_attraction(attr_id, config, client, idx):
         f" Parc: {status_parc} | Régime: {saison_label}"
     )
     print(
-        f"     ➔ Consigne optimale recommandée: {target_setpoint:.1f}°C (Chaud: {sp_chaud:.1f}°C"
-        f" / Froid: {sp_froid:.1f}°C) | CTA: {current_cta_state}"
+        f"     ➔ Consigne recommandée: {target_setpoint:.1f}°C (Chaud:"
+        f" {sp_chaud:.1f}°C / Froid: {sp_froid:.1f}°C) | CTA:"
+        f" {current_cta_state}"
     )
     print(
-        f"     📊 [HEURE ACTUELLE] Initial ML (Pred): {e_pred_now:.2f} {unit} |"
-        f" Optimisé (Opt): {e_opt_now:.2f} {unit}"
+        f"     📊 [HEURE ACTUELLE] Initial ML: {e_pred_now:.2f} {unit} |"
+        f" Optimisé: {e_opt_now:.2f} {unit}"
     )
     print(
         f"     💡 [ÉCONOMIE DÉTECTÉE] ΔE: {e_saved_now:+.2f} {unit}"
         f" ({pct_saved_now:+.1f}%)"
     )
     print(
-        f"     📈 [CUMUL 24H] Économie totale projetée 24h:"
-        f" {total_saved_24h:+.2f} {unit} ({pct_saved_24h:+.1f}%)\n"
+        f"     📈 [CUMUL 24H] Économie totale 24h: {total_saved_24h:+.2f} {unit}"
+        f" ({pct_saved_24h:+.1f}%)\n"
     )
 
 
 # =====================================================================
-# 4. BOUCLE PRINCIPALE D'OPTIMISATION (MAIN LOOP)
+# 4. BOUCLE PRINCIPALE D'OPTIMISATION (MAIN LOOP AVEC PERSISTENT CLIENT)
 # =====================================================================
 async def main():
     print(
         "🚀 [MOTEUR DE CONTRÔLE CVC] Démarrage du moteur d'optimisation"
         " Multi-Attractions..."
     )
-    INTERVALLE_TEST = 2.0
+    INTERVALLE_TEST = 2.0  # Bạn có thể nâng lên 5.0 hoặc 10.0 khi chạy ổn định
 
     while True:
-        t_debut = time.time()
-
         try:
+            print(f"🔌 Connexion au serveur OPC-UA Panorama ({PANORAMA_URL})...")
             async with Client(url=PANORAMA_URL) as client:
                 idx = await client.get_namespace_index(URI_PANORAMA)
+                print("✅ Connecté au serveur Panorama OPC-UA avec succès.")
 
-                print("\n" + "=" * 75)
-                print(
-                    "⏱️ [CYCLE DE CALCUL SCADA] Exécution de l'optimisation"
-                    " multi-attractions"
-                )
-                print("-" * 75)
+                while True:
+                    t_debut = time.time()
 
-                tasks = [
-                    traiter_attraction(attr_id, config, client, idx)
-                    for attr_id, config in ATTRACTION_CONFIGS.items()
-                ]
-                await asyncio.gather(*tasks)
+                    print("\n" + "=" * 75)
+                    print(
+                        "⏱️ [CYCLE DE CALCUL SCADA] Exécution de l'optimisation"
+                        " multi-attractions"
+                    )
+                    print("-" * 75)
 
-                print("=" * 75)
+                    tasks = [
+                        traiter_attraction(attr_id, config, client, idx)
+                        for attr_id, config in ATTRACTION_CONFIGS.items()
+                    ]
+                    await asyncio.gather(*tasks)
 
+                    print("=" * 75)
+
+                    t_ecoule = time.time() - t_debut
+                    t_attente = max(0.0, INTERVALLE_TEST - t_ecoule)
+                    await asyncio.sleep(t_attente)
+
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            print("\n🛑 Stop demandé par l'utilisateur. Fermeture propre...")
+            break
         except Exception as e:
-            print(f"❌ Erreur lors du traitement SCADA: {e}")
-
-        t_ecoule = time.time() - t_debut
-        t_attente = max(0.0, INTERVALLE_TEST - t_ecoule)
-        await asyncio.sleep(t_attente)
+            print(
+                f"❌ Erreur de connexion ou traitement SCADA: {e}. Nouvelle"
+                " tentative dans 5s..."
+            )
+            await asyncio.sleep(5.0)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Programme arrêté proprement.")

@@ -13,7 +13,13 @@ export default function DataPipelineLayout() {
         { path: 'multi-column', label: '5. Multi Column Analysis', desc: 'Analyse multi colonne' },
         { path: 'timeseries-analysis', label: '6. Time Series Analysis', desc: 'Analyse des series temporelles' },
         { path: 'missing-value', label: '7. Missing Value Imputation', desc: 'Impute des valeurs manquantes' },
-        { path: 'outliers', label: '7. Outliers Imputation', desc: 'Impute des valeurs abberantes' },
+        { path: 'outliers', label: '8. Outliers Imputation', desc: 'Impute des valeurs abberantes' },
+        { path: 'scaling', label: '9. Scaling', desc: 'Mise à l\'échelle des données' },
+        { path: 'encoding', label: '10. Encoding', desc: 'Encodage des données' },
+        { path: 'duplicated', label: '11. Duplicated Data Removal', desc: 'Suppression des doublons' },
+        { path: 'time-series-transformation', label: '12. Time Series Transformation', desc: 'Transformation des séries temporelles' },
+        { path: 'traceability', label: '13. Traceability', desc: 'Traçabilité des données' },
+        { path: 'feature-selection', label: '14. Feature Selection', desc: 'Sélection des caractéristiques' }
     ];
 
     return (

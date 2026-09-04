@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     Sliders, Filter, Layers, CheckSquare, Square,
-    Play, Trash2, AlertTriangle, CheckCircle2, X, ShieldAlert
+    Play, Trash2, AlertTriangle, CheckCircle2, X, ShieldAlert, RefreshCw
 } from 'lucide-react';
 
 const OUTLIER_METHODS = [
-    { value: 'iqr', label: 'IQR - Écart Interquartile (Tứ phân vị)' },
-    { value: 'z_score', label: 'Z-Score (Độ lệch chuẩn)' },
+    { value: 'iqr', label: 'IQR - Écart Interquartile' },
+    { value: 'z_score', label: 'Z-Score (Écart-type)' },
     { value: 'isolation_forest', label: 'Isolation Forest (Forêt d\'isolement)' },
     { value: 'lof', label: 'LOF - Local Outlier Factor' },
 ];
@@ -35,18 +35,18 @@ export default function OutliersModule() {
     const [errorMsg, setErrorMsg] = useState(null);
     const [selectedVersion, setSelectedVersion] = useState(null);
 
-    const API_BASE = 'http://localhost:8000/data-prep';
+    const API_BASE = 'http://localhost:8000';
 
-    // 1. Fetch danh sách tất cả các Outlier Versions và Missing Versions từ Backend
+    // 1. Fetch liste des versions
     const fetchVersions = async () => {
         try {
-            const res = await fetch(`${API_BASE}/versions`);
+            const res = await fetch(`${API_BASE}/data-prep/versions`);
             if (res.ok) {
                 const data = await res.json();
                 setVersions(data || {});
             }
         } catch (err) {
-            console.error('Lỗi khi tải danh sách phiên bản:', err);
+            console.error('Erreur lors du chargement des versions:', err);
         }
     };
 
@@ -54,7 +54,7 @@ export default function OutliersModule() {
         fetchVersions();
     }, []);
 
-    // 2. Tự động đồng bộ id_attraction khi đổi Parent Version
+    // 2. Synchronisation de id_attraction
     useEffect(() => {
         if (selectedParent && selectedParent !== 'v0_raw' && versions[selectedParent]) {
             const parentObj = versions[selectedParent];
@@ -73,7 +73,7 @@ export default function OutliersModule() {
         }
     }, [selectedParent, versions]);
 
-    // 3. Fetch Thống kê Outliers & Danh sách Columns / Attractions từ Version Cha
+    // 3. Fetch Statistiques des Outliers
     useEffect(() => {
         const fetchParentStats = async () => {
             try {
@@ -84,19 +84,16 @@ export default function OutliersModule() {
                     z_threshold: zThreshold
                 });
 
-                const url = `${API_BASE}/outliers/versions/${selectedParent}/stats?${queryParams.toString()}`;
+                const url = `${API_BASE}/data-prep/outliers/versions/${selectedParent}/stats?${queryParams.toString()}`;
                 const res = await fetch(url);
 
                 if (res.ok) {
                     const data = await res.json();
-                    console.log("Dữ liệu stats nhận từ API:", data); // Bật F12 xem Console để kiểm tra
 
-                    // Chuẩn hóa linh hoạt outlier_counts (dù API trả về Object hay Array)
                     const rawCounts = data.outlier_counts || data.stats?.outliers_detected || {};
                     let normalizedCounts = {};
 
                     if (Array.isArray(rawCounts)) {
-                        // Trường hợp API trả về dạng array: [{column: 'col1', count: 5}, ...] hoặc [{col1: 5}, ...]
                         rawCounts.forEach(item => {
                             if (typeof item === 'object' && item !== null) {
                                 const colName = item.column || item.col || Object.keys(item)[0];
@@ -105,7 +102,6 @@ export default function OutliersModule() {
                             }
                         });
                     } else if (typeof rawCounts === 'object' && rawCounts !== null) {
-                        // Trường hợp API trả về dạng object chuẩn: { "col1": 5, "col2": 12 }
                         normalizedCounts = rawCounts;
                     }
 
@@ -119,15 +115,14 @@ export default function OutliersModule() {
                     const cols = Object.keys(normalizedCounts);
                     setAvailableColumns(cols);
 
-                    // Nếu chưa chọn cột nào trước đó, tự động chọn tất cả
                     if (cols.length > 0) {
                         setSelectedColumns(prev => prev.length === 0 ? cols : prev);
                     }
                 } else {
-                    console.warn('Không lấy được thống kê outliers từ API');
+                    console.warn('Impossible de récupérer les statistiques des outliers depuis l\'API');
                 }
             } catch (err) {
-                console.error('Lỗi fetch stats outliers:', err);
+                console.error('Erreur lors du chargement des statistiques:', err);
             }
         };
 
@@ -136,7 +131,6 @@ export default function OutliersModule() {
         }
     }, [selectedParent, selectedAttraction, selectedMethod, iqrFactor, zThreshold]);
 
-    // Lọc danh sách phiên bản theo Scope Attraction (Cho phép hiển thị bản không ràng buộc attraction)
     const filteredVersions = useMemo(() => {
         return Object.values(versions).filter(v => {
             if (selectedAttraction === 'ALL') return true;
@@ -155,10 +149,9 @@ export default function OutliersModule() {
     const handleSelectAllColumns = () => setSelectedColumns([...availableColumns]);
     const handleDeselectAllColumns = () => setSelectedColumns([]);
 
-    // Thực thi Xử lý Outliers
     const handleExecute = async () => {
         if (treatmentMode === 'by_column' && selectedColumns.length === 0) {
-            setErrorMsg('Vui lòng chọn ít nhất một cột dữ liệu để xử lý.');
+            setErrorMsg('Veuillez sélectionner au moins une colonne à traiter.');
             return;
         }
 
@@ -188,7 +181,7 @@ export default function OutliersModule() {
         };
 
         try {
-            const res = await fetch(`${API_BASE}/outliers`, {
+            const res = await fetch(`${API_BASE}/data-prep/outliers`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -196,7 +189,7 @@ export default function OutliersModule() {
 
             if (!res.ok) {
                 const errorData = await res.json();
-                throw new Error(errorData.detail || 'Có lỗi xảy ra khi xử lý outliers.');
+                throw new Error(errorData.detail || 'Une erreur est survenue lors du traitement des outliers.');
             }
 
             const resultData = await res.json();
@@ -209,16 +202,15 @@ export default function OutliersModule() {
         }
     };
 
-    // Xóa phiên bản dữ liệu
     const handleDeleteVersion = async (e, versionId) => {
         e.stopPropagation();
-        if (!window.confirm(`Bạn có chắc chắn muốn xóa phiên bản ${versionId} ?`)) return;
+        if (!window.confirm(`Êtes-vous sûr de vouloir supprimer la version ${versionId} ?`)) return;
 
         try {
-            const res = await fetch(`${API_BASE}/outlier-versions/${versionId}`, { method: 'DELETE' });
+            const res = await fetch(`${API_BASE}/data-prep/versions/${versionId}`, { method: 'DELETE' });
             if (!res.ok) {
                 const errorData = await res.json();
-                throw new Error(errorData.detail || 'Không thể xóa phiên bản này.');
+                throw new Error(errorData.detail || 'Impossible de supprimer cette version.');
             }
             if (selectedVersion && selectedVersion.version_id === versionId) {
                 setSelectedVersion(null);
@@ -300,13 +292,13 @@ export default function OutliersModule() {
                 {/* GRID CONTENT */}
                 <div style={styles.gridContainer}>
 
-                    {/* PANEL CAU HINH */}
+                    {/* PANEL DE CONFIGURATION */}
                     <div style={styles.card}>
                         <h2 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: '700', color: '#0f172a', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px' }}>
                             ⚙️ Configuration des Outliers
                         </h2>
 
-                        {/* 1. Parent Version */}
+                        {/* 1. Version Source */}
                         <div style={styles.formGroup}>
                             <label style={styles.label}>1. Version Source (Parent)</label>
                             <div style={styles.selectBox}>
@@ -320,9 +312,9 @@ export default function OutliersModule() {
                             </div>
                         </div>
 
-                        {/* 2. Scope Attraction */}
+                        {/* 2. Périmètre Attraction */}
                         <div style={styles.formGroup}>
-                            <label style={styles.label}>2. Scope Attraction (id_attraction)</label>
+                            <label style={styles.label}>2. Périmètre Attraction (id_attraction)</label>
                             <div style={{ ...styles.selectBox, backgroundColor: '#f0f9ff', borderColor: '#bae6fd' }}>
                                 <Filter size={14} color="#0284c7" />
                                 <select value={selectedAttraction} onChange={(e) => setSelectedAttraction(e.target.value)} style={{ ...styles.select, color: '#0369a1' }}>
@@ -340,7 +332,7 @@ export default function OutliersModule() {
                             </div>
                         </div>
 
-                        {/* 3. Treatment Mode */}
+                        {/* 3. Type d'approche */}
                         <div style={styles.formGroup}>
                             <label style={styles.label}>3. Type d'approche</label>
                             <div style={{ display: 'flex', gap: '8px' }}>
@@ -355,7 +347,7 @@ export default function OutliersModule() {
 
                         {treatmentMode === 'by_column' && (
                             <>
-                                {/* 4. Select Columns */}
+                                {/* 4. Selection des Colonnes */}
                                 <div style={styles.formGroup}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                         <label style={{ ...styles.label, margin: 0 }}>4. Colonnes ({selectedColumns.length})</label>
@@ -386,7 +378,7 @@ export default function OutliersModule() {
                                                             backgroundColor: outlierCount > 0 ? '#fef2f2' : '#f0fdf4',
                                                             padding: '2px 8px', borderRadius: '12px'
                                                         }}>
-                                                            {outlierCount} outliers
+                                                            {outlierCount} aberrants
                                                         </span>
                                                     </div>
                                                 );
@@ -395,7 +387,7 @@ export default function OutliersModule() {
                                     </div>
                                 </div>
 
-                                {/* 5. Select Method */}
+                                {/* 5. Méthode de Détection */}
                                 <div style={styles.formGroup}>
                                     <label style={styles.label}>5. Méthode de Détection</label>
                                     <div style={styles.selectBox}>
@@ -407,20 +399,20 @@ export default function OutliersModule() {
                                     </div>
                                 </div>
 
-                                {/* 6. Action Traitement */}
+                                {/* 6. Action de Traitement */}
                                 <div style={styles.formGroup}>
                                     <label style={styles.label}>6. Action de Traitement</label>
                                     <div style={styles.selectBox}>
                                         <select value={selectedAction} onChange={(e) => setSelectedAction(e.target.value)} style={styles.select}>
-                                            <option value="cap">Cap / Winsorization (Giới hạn biên)</option>
-                                            <option value="nullify">Nullify (Chuyển thành NaN để Impute)</option>
-                                            <option value="drop">Drop (Xóa các dòng chứa Outlier)</option>
-                                            <option value="none">None (Chỉ kiểm tra, không thay đổi)</option>
+                                            <option value="cap">Cap / Winsorization (Écretage)</option>
+                                            <option value="nullify">Nullify (Convertir en NaN pour Imputation)</option>
+                                            <option value="drop">Drop (Supprimer les lignes contenant des outliers)</option>
+                                            <option value="none">None (Inspecter uniquement)</option>
                                         </select>
                                     </div>
                                 </div>
 
-                                {/* Hyperparameters */}
+                                {/* Hyperparamètres */}
                                 {selectedMethod === 'z_score' && (
                                     <div style={styles.formGroup}>
                                         <label style={styles.label}>Seuil Z-Score (Threshold)</label>
@@ -447,15 +439,15 @@ export default function OutliersModule() {
                                 <label style={styles.label}>4. Règle métier globale</label>
                                 <div style={styles.selectBox}>
                                     <select value={globalRule} onChange={(e) => setGlobalRule(e.target.value)} style={styles.select}>
-                                        <option value="visitor_domain_rules">Filtrage Physique Fréquentation (&gt; Max Capacity)</option>
-                                        <option value="energy_domain_rules">Filtrage Capteurs HVAC / Météo (&lt; Min / &gt; Max Absolu)</option>
+                                        <option value="visitor_domain_rules">Règles fréquentation</option>
+                                        <option value="energy_domain_rules">Règles énergie</option>
                                     </select>
                                 </div>
                             </div>
                         )}
 
                         <button onClick={handleExecute} disabled={loading} style={{ ...styles.actionBtn, backgroundColor: loading ? '#94a3b8' : '#dc2626' }}>
-                            <Play size={16} />
+                            {loading ? <RefreshCw className="animate-spin" size={16} /> : <Play size={16} />}
                             {loading
                                 ? 'Traitement en cours...'
                                 : treatmentMode === 'domain_rules'
@@ -472,16 +464,18 @@ export default function OutliersModule() {
                         )}
                     </div>
 
-                    {/* PANEL PHẢI: KẾT QUẢ & DANH SÁCH VERSION */}
+                    {/* PANEL DROIT: RAPPORT DÉTAILLÉ (AVANT / APRÈS / NETTOYÉS) */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', minWidth: 0 }}>
 
-                        {/* CHI TIẾT VERSION ĐƯỢC CHỌN */}
+                        {/* RAPPORT DE LA VERSION SÉLECTIONNÉE */}
                         {selectedVersion ? (
                             <div style={styles.resultCard}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                         <CheckCircle2 size={18} color="#991b1b" />
-                                        <span style={{ fontWeight: '800', color: '#991b1b', fontSize: '14px' }}>Rapport Outliers Traité</span>
+                                        <span style={{ fontWeight: '800', color: '#991b1b', fontSize: '14px' }}>
+                                            Rapport de Traitement des Outliers
+                                        </span>
                                     </div>
                                     <button onClick={() => setSelectedVersion(null)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}>
                                         <X size={18} />
@@ -499,31 +493,66 @@ export default function OutliersModule() {
 
                                 <div style={{ fontSize: '12px', color: '#334155', marginBottom: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                     <div><strong>Méthode :</strong> {selectedVersion.method_label_fr || selectedVersion.method}</div>
-                                    <div><strong>Action :</strong> <code style={{ backgroundColor: '#ffffff', padding: '2px 6px', borderRadius: '6px' }}>{selectedVersion.action || 'cap'}</code></div>
-                                    <div><strong>Parent :</strong> <code style={{ backgroundColor: '#ffffff', padding: '2px 6px', borderRadius: '6px' }}>{selectedVersion.parent_version_id}</code></div>
+                                    <div><strong>Action effectuée :</strong> <code style={{ backgroundColor: '#ffffff', padding: '2px 6px', borderRadius: '6px' }}>{selectedVersion.action || 'cap'}</code></div>
+                                    <div><strong>Version Parent :</strong> <code style={{ backgroundColor: '#ffffff', padding: '2px 6px', borderRadius: '6px' }}>{selectedVersion.parent_version_id}</code></div>
                                     {selectedVersion.parameters && Object.keys(selectedVersion.parameters).length > 0 && (
                                         <div><strong>Paramètres :</strong> <code style={{ backgroundColor: '#ffffff', padding: '2px 6px', borderRadius: '6px' }}>{JSON.stringify(selectedVersion.parameters)}</code></div>
                                     )}
                                 </div>
 
+                                {/* TABLEAU AVANT / APRÈS / NETTOYÉS */}
                                 <div style={{ overflowX: 'auto' }}>
                                     <table style={styles.table}>
                                         <thead>
                                             <tr>
                                                 <th style={styles.th}>Colonne</th>
-                                                <th style={{ ...styles.th, textAlign: 'center' }}>Outliers Phát Hiện</th>
+                                                <th style={{ ...styles.th, textAlign: 'center' }}>Avant</th>
+                                                <th style={{ ...styles.th, textAlign: 'center' }}>Après</th>
+                                                <th style={{ ...styles.th, textAlign: 'center' }}>Nettoyés</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {selectedVersion.stats?.outliers_detected && Object.keys(selectedVersion.stats.outliers_detected).map((col) => {
-                                                const cnt = selectedVersion.stats.outliers_detected[col] || 0;
-                                                return (
-                                                    <tr key={col}>
-                                                        <td style={styles.td}><code style={{ fontWeight: '600' }}>{col}</code></td>
-                                                        <td style={{ ...styles.td, textAlign: 'center', color: cnt > 0 ? '#dc2626' : '#16a34a', fontWeight: '800' }}>{cnt}</td>
-                                                    </tr>
-                                                );
-                                            })}
+                                            {(() => {
+                                                const stats = selectedVersion.stats || {};
+                                                const beforeObj = stats.outliers_before || stats.outliers_detected || {};
+                                                const afterObj = stats.outliers_after || {};
+
+                                                const cols = Array.from(new Set([...Object.keys(beforeObj), ...Object.keys(afterObj)]));
+
+                                                if (cols.length === 0) {
+                                                    return (
+                                                        <tr>
+                                                            <td colSpan="4" style={{ ...styles.td, textAlign: 'center', color: '#94a3b8' }}>
+                                                                Aucun détail statistique disponible.
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                }
+
+                                                return cols.map((col) => {
+                                                    const avant = beforeObj[col] ?? 0;
+                                                    // Si action != 'none', après est généralement 0 sauf règles complexes
+                                                    const apres = afterObj[col] ?? (selectedVersion.action === 'none' ? avant : 0);
+                                                    const nettoyes = Math.max(0, avant - apres);
+
+                                                    return (
+                                                        <tr key={col}>
+                                                            <td style={styles.td}>
+                                                                <code style={{ fontWeight: '600' }}>{col}</code>
+                                                            </td>
+                                                            <td style={{ ...styles.td, textAlign: 'center', color: avant > 0 ? '#dc2626' : '#64748b', fontWeight: '700' }}>
+                                                                {avant}
+                                                            </td>
+                                                            <td style={{ ...styles.td, textAlign: 'center', color: apres > 0 ? '#d97706' : '#16a34a', fontWeight: '700' }}>
+                                                                {apres}
+                                                            </td>
+                                                            <td style={{ ...styles.td, textAlign: 'center', color: nettoyes > 0 ? '#2563eb' : '#64748b', fontWeight: '800' }}>
+                                                                {nettoyes > 0 ? `-${nettoyes}` : '0'}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                });
+                                            })()}
                                         </tbody>
                                     </table>
                                 </div>

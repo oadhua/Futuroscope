@@ -79,6 +79,8 @@ class MissingValueService:
         for row in rows:
             v_id = row["version_id"]
             cols = row["target_columns"].split(", ") if row["target_columns"] else []
+            params = row["parameters"] if row["parameters"] else {}
+
             metadata_store[v_id] = {
                 "version_id": v_id,
                 "parent_version_id": row["parent_version_id"],
@@ -86,11 +88,10 @@ class MissingValueService:
                 "step_type": row["step_type"],
                 "method": row["method"],
                 "method_label_fr": row["method_label_fr"],
+                "action": params.get("action"),
                 "target_columns": cols,
-                "parameters": row["parameters"] if row["parameters"] else {},
-                "stats": row["stats"]
-                if row["stats"]
-                else {"null_count_before": {}, "null_count_after": {}},
+                "parameters": params,
+                "stats": row["stats"] if row["stats"] else {},
                 "file_path": row["file_path"],
                 "created_at": row["created_at"].isoformat()
                 if row["created_at"]
@@ -114,6 +115,9 @@ class MissingValueService:
                     return pd.read_sql(text(query_sql), conn)
             except Exception as e:
                 raise ValueError(f"Lỗi khi truy vấn v0_raw từ Database: {str(e)}")
+
+        if not re.match(r"^[a-zA-Z0-9_]+$", version_id):
+            raise ValueError("Tên version_id chứa ký tự không hợp lệ.")
 
         with engine.connect() as conn:
             check_sql = text("""
@@ -148,7 +152,9 @@ class MissingValueService:
                 and id_attraction != "ALL"
                 and "id_attraction" in df.columns
             ):
-                df = df[df["id_attraction"].astype(str) == str(id_attraction)]
+                df = df[
+                    df["id_attraction"].astype(str) == str(id_attraction)
+                ].reset_index(drop=True)
 
             return df
 
@@ -156,7 +162,6 @@ class MissingValueService:
     def get_version_null_stats(
         cls, version_id: str, id_attraction: str = "ALL"
     ) -> Tuple[Dict[str, int], List[str]]:
-        """Lấy danh sách các cột, số lượng null và danh sách id_attraction trong bảng."""
         df_full = cls.load_version_dataframe(version_id, id_attraction="ALL")
 
         attractions = []
@@ -183,6 +188,10 @@ class MissingValueService:
     @classmethod
     def save_version_dataframe(cls, version_id: str, df: pd.DataFrame) -> str:
         cls._init_db_schema()
+
+        if not re.match(r"^[a-zA-Z0-9_]+$", version_id):
+            raise ValueError("Tên version_id chứa ký tự không hợp lệ.")
+
         df.to_sql(
             name=version_id,
             con=engine,
@@ -194,17 +203,156 @@ class MissingValueService:
 
     # ==================== LUẬT NGHIỆP VỤ FUTUROSCOPE ====================
 
-    MAX_CAPACITY_MAP = {
-        "H03": 750,
-        "H07": 800,
-    }
-    DEFAULT_MAX_CAPACITY = 1200
+    # MAX_CAPACITY_MAP = {
+    #     "H03": 750,
+    #     "H07": 800,
+    # }
+    # DEFAULT_MAX_CAPACITY = 1200
+
+    # @classmethod
+    # def apply_visitor_domain_rules(cls, df: pd.DataFrame) -> pd.DataFrame:
+    #     df_out = df.copy()
+
+    #     if "datetime" in df_out.columns:
+    #         df_out["datetime"] = pd.to_datetime(df_out["datetime"])
+    #         sort_cols = [
+    #             c for c in ["id_attraction", "datetime"] if c in df_out.columns
+    #         ]
+    #         if sort_cols:
+    #             df_out = df_out.sort_values(by=sort_cols).reset_index(drop=True)
+
+    #     if "h_ouv" in df_out.columns:
+    #         df_out["h_ouv"] = df_out["h_ouv"].fillna("00:00")
+    #     if "h_ferm" in df_out.columns:
+    #         df_out["h_ferm"] = df_out["h_ferm"].fillna("00:00")
+
+    #     if "is_open" not in df_out.columns:
+    #         df_out["is_open"] = 1
+    #     else:
+    #         df_out["is_open"] = df_out["is_open"].fillna(1)
+
+    #     if "ouvert" in df_out.columns:
+    #         if "type_frequentation" in df_out.columns and "heure" in df_out.columns:
+    #             mask_open_valid = df_out["is_open"] == 1
+    #             profil_moyen = (
+    #                 df_out[mask_open_valid]
+    #                 .groupby(["type_frequentation", "heure"])["ouvert"]
+    #                 .transform("mean")
+    #             )
+    #             df_out["ouvert"] = df_out["ouvert"].fillna(profil_moyen)
+
+    #         df_out["ouvert"] = (
+    #             df_out["ouvert"].fillna(0.0).ffill().bfill().clip(0.0, 1.0).round(1)
+    #         )
+
+    #     df_out.loc[df_out["is_open"] == 0, "ouvert"] = 0.0
+    #     cond_closed = (df_out["is_open"] == 0) | (df_out.get("ouvert", 1) == 0)
+
+    #     if "interrompu" in df_out.columns:
+    #         df_out["interrompu"] = (
+    #             df_out["interrompu"].fillna(0.0).astype(float).round(1)
+    #         )
+    #         df_out.loc[cond_closed, "interrompu"] = 0.0
+
+    #     if "ouvert" in df_out.columns and "interrompu" in df_out.columns:
+    #         df_out["operation"] = (
+    #             (df_out["ouvert"] - df_out["interrompu"]).clip(0.0, 1.0).round(1)
+    #         )
+    #         df_out.loc[cond_closed, "operation"] = 0.0
+
+    #     if "visitor_count" in df_out.columns:
+    #         df_out.loc[cond_closed, "visitor_count"] = 0.0
+
+    #         if "id_attraction" in df_out.columns:
+    #             df_out["prev_day_visitor"] = df_out.groupby("id_attraction")[
+    #                 "visitor_count"
+    #             ].shift(24)
+    #         else:
+    #             df_out["prev_day_visitor"] = df_out["visitor_count"].shift(24)
+
+    #         nan_mask = df_out["visitor_count"].isna()
+    #         df_out.loc[nan_mask, "visitor_count"] = df_out.loc[
+    #             nan_mask, "prev_day_visitor"
+    #         ]
+    #         df_out.drop(columns=["prev_day_visitor"], inplace=True, errors="ignore")
+
+    #         if df_out["visitor_count"].isna().sum() > 0:
+    #             if "id_attraction" in df_out.columns:
+    #                 df_out["visitor_count"] = df_out.groupby("id_attraction")[
+    #                     "visitor_count"
+    #                 ].transform(
+    #                     lambda grp: grp.interpolate(method="linear").ffill().bfill()
+    #                 )
+    #             else:
+    #                 df_out["visitor_count"] = (
+    #                     df_out["visitor_count"]
+    #                     .interpolate(method="linear")
+    #                     .ffill()
+    #                     .bfill()
+    #                 )
+
+    #         df_out.loc[cond_closed, "visitor_count"] = 0.0
+
+    #         if "id_attraction" in df_out.columns:
+
+    #             def cap_visitor(group):
+    #                 att_id = str(group["id_attraction"].iloc[0])
+    #                 cap = cls.MAX_CAPACITY_MAP.get(att_id, cls.DEFAULT_MAX_CAPACITY)
+    #                 group["visitor_count"] = group["visitor_count"].clip(
+    #                     lower=0, upper=cap
+    #                 )
+    #                 return group
+
+    #             df_out = df_out.groupby("id_attraction", group_keys=False).apply(
+    #                 cap_visitor
+    #             )
+    #         else:
+    #             df_out["visitor_count"] = df_out["visitor_count"].clip(
+    #                 lower=0, upper=cls.DEFAULT_MAX_CAPACITY
+    #             )
+
+    #         df_out["visitor_count"] = (
+    #             df_out["visitor_count"].fillna(0).round().astype(int)
+    #         )
+
+    #     weather_cols = [
+    #         "temperature",
+    #         "humidite",
+    #         "rayonnement_solaire",
+    #         "day_degree_cold",
+    #         "day_degree_hot",
+    #         "temp_max",
+    #         "temp_min",
+    #         "temp_moy",
+    #         "humidite_max",
+    #         "humidite_min",
+    #         "humidite_moy",
+    #     ]
+    #     weather_cols_in_df = [c for c in weather_cols if c in df_out.columns]
+
+    #     if weather_cols_in_df:
+    #         if "id_attraction" in df_out.columns:
+    #             df_out[weather_cols_in_df] = df_out.groupby("id_attraction")[
+    #                 weather_cols_in_df
+    #             ].transform(
+    #                 lambda grp: grp.interpolate(method="linear").ffill().bfill()
+    #             )
+    #         else:
+    #             df_out[weather_cols_in_df] = (
+    #                 df_out[weather_cols_in_df]
+    #                 .interpolate(method="linear")
+    #                 .ffill()
+    #                 .bfill()
+    #             )
+    #         df_out[weather_cols_in_df] = df_out[weather_cols_in_df].round(1)
+
+    #     return df_out
 
     @classmethod
     def apply_visitor_domain_rules(cls, df: pd.DataFrame) -> pd.DataFrame:
         df_out = df.copy()
 
-        # 1. Sắp xếp chuỗi thời gian chính xác
+        # 1. Đảm bảo sắp xếp thứ tự thời gian
         if "datetime" in df_out.columns:
             df_out["datetime"] = pd.to_datetime(df_out["datetime"])
             sort_cols = [
@@ -213,17 +361,19 @@ class MissingValueService:
             if sort_cols:
                 df_out = df_out.sort_values(by=sort_cols).reset_index(drop=True)
 
-        # 2. Xử lý Trạng thái Hoạt động
+        # 2. Xử lý giờ mở/đóng cửa
         if "h_ouv" in df_out.columns:
             df_out["h_ouv"] = df_out["h_ouv"].fillna("00:00")
         if "h_ferm" in df_out.columns:
             df_out["h_ferm"] = df_out["h_ferm"].fillna("00:00")
 
+        # 3. Trạng thái is_open
         if "is_open" not in df_out.columns:
             df_out["is_open"] = 1
         else:
             df_out["is_open"] = df_out["is_open"].fillna(1)
 
+        # 4. Trạng thái ouvert
         if "ouvert" in df_out.columns:
             if "type_frequentation" in df_out.columns and "heure" in df_out.columns:
                 mask_open_valid = df_out["is_open"] == 1
@@ -241,23 +391,25 @@ class MissingValueService:
         df_out.loc[df_out["is_open"] == 0, "ouvert"] = 0.0
         cond_closed = (df_out["is_open"] == 0) | (df_out.get("ouvert", 1) == 0)
 
-        # 3. Xử lý Trạng thái phụ
+        # 5. Trạng thái interrompu
         if "interrompu" in df_out.columns:
             df_out["interrompu"] = (
                 df_out["interrompu"].fillna(0.0).astype(float).round(1)
             )
             df_out.loc[cond_closed, "interrompu"] = 0.0
 
+        # 6. Tính toán operation
         if "ouvert" in df_out.columns and "interrompu" in df_out.columns:
             df_out["operation"] = (
                 (df_out["ouvert"] - df_out["interrompu"]).clip(0.0, 1.0).round(1)
             )
             df_out.loc[cond_closed, "operation"] = 0.0
 
-        # 4. Xử lý Lượt khách (visitor_count)
+        # 7. Xử lý missing values cho visitor_count (Không dùng Capping)
         if "visitor_count" in df_out.columns:
             df_out.loc[cond_closed, "visitor_count"] = 0.0
 
+            # Lấy giá trị shift 24h từ ngày hôm trước để điền vào chỗ thiếu
             if "id_attraction" in df_out.columns:
                 df_out["prev_day_visitor"] = df_out.groupby("id_attraction")[
                     "visitor_count"
@@ -271,6 +423,7 @@ class MissingValueService:
             ]
             df_out.drop(columns=["prev_day_visitor"], inplace=True, errors="ignore")
 
+            # Nội suy tuyến tính, kết hợp ffill và bfill để lấp đầy các khoảng trống dữ liệu
             if df_out["visitor_count"].isna().sum() > 0:
                 if "id_attraction" in df_out.columns:
                     df_out["visitor_count"] = df_out.groupby("id_attraction")[
@@ -286,31 +439,15 @@ class MissingValueService:
                         .bfill()
                     )
 
+            # Đảm bảo các khung giờ đóng cửa vẫn là 0
             df_out.loc[cond_closed, "visitor_count"] = 0.0
 
-            if "id_attraction" in df_out.columns:
-
-                def cap_visitor(group):
-                    att_id = str(group["id_attraction"].iloc[0])
-                    cap = cls.MAX_CAPACITY_MAP.get(att_id, cls.DEFAULT_MAX_CAPACITY)
-                    group["visitor_count"] = group["visitor_count"].clip(
-                        lower=0, upper=cap
-                    )
-                    return group
-
-                df_out = df_out.groupby("id_attraction", group_keys=False).apply(
-                    cap_visitor
-                )
-            else:
-                df_out["visitor_count"] = df_out["visitor_count"].clip(
-                    lower=0, upper=cls.DEFAULT_MAX_CAPACITY
-                )
-
+            # Hoàn thiện các giá trị NaN cuối cùng (nếu có) bằng 0 và làm tròn thành số nguyên
             df_out["visitor_count"] = (
                 df_out["visitor_count"].fillna(0).round().astype(int)
             )
 
-        # 5. Xử lý dữ liệu thời tiết
+        # 8. Xử lý các cột thời tiết
         weather_cols = [
             "temperature",
             "humidite",
@@ -348,6 +485,7 @@ class MissingValueService:
     def apply_energy_domain_rules(cls, df: pd.DataFrame) -> pd.DataFrame:
         df_out = df.copy()
 
+        # 1. Chuẩn hóa Datetime & Sắp xếp chuỗi thời gian
         if "datetime" in df_out.columns:
             df_out["datetime"] = pd.to_datetime(df_out["datetime"])
             sort_cols = [
@@ -359,29 +497,13 @@ class MissingValueService:
             if "heure" not in df_out.columns:
                 df_out["heure"] = df_out["datetime"].dt.hour
 
+        # 2. Đảm bảo biến is_open chuẩn xác
         if "is_open" not in df_out.columns:
             df_out["is_open"] = 1
         else:
             df_out["is_open"] = df_out["is_open"].fillna(1)
 
-        weather_cols = [
-            c
-            for c in ["temperature", "temp_moy", "rayonnement_solaire"]
-            if c in df_out.columns
-        ]
-        if weather_cols:
-            if "id_attraction" in df_out.columns:
-                df_out[weather_cols] = df_out.groupby("id_attraction")[
-                    weather_cols
-                ].transform(
-                    lambda grp: grp.interpolate(method="linear").ffill().bfill()
-                )
-            else:
-                df_out[weather_cols] = (
-                    df_out[weather_cols].interpolate(method="linear").ffill().bfill()
-                )
-
-        # Tự động quét các cột năng lượng động (bao gồm cột ghép alias dạng H03_elec_kwh...)
+        # 3. Xác định các cột năng lượng (Elec, EC, kWh, kvarh, ...)
         energy_cols = [
             c
             for c in df_out.columns
@@ -390,37 +512,40 @@ class MissingValueService:
 
         cond_closed = df_out["is_open"] == 0
         cond_open = df_out["is_open"] == 1
+        group_attrs = (
+            ["id_attraction", "heure"]
+            if "id_attraction" in df_out.columns
+            else ["heure"]
+        )
 
         for col in energy_cols:
+            # A. Đóng cửa (is_open == 0): Điền công suất nền Baseload (median)
             if cond_closed.any():
                 closed_vals = df_out.loc[cond_closed, col].dropna()
-                baseload = closed_vals.median() if not closed_vals.empty else 0.0
+                baseload = float(closed_vals.median()) if not closed_vals.empty else 0.0
                 df_out.loc[cond_closed & df_out[col].isna(), col] = baseload
 
+            # B. Mở cửa (is_open == 1): Điền theo Hourly Profile (trung bình theo khung giờ)
             if cond_open.any() and df_out.loc[cond_open, col].isna().any():
-                if "id_attraction" in df_out.columns:
-                    hourly_profile = (
-                        df_out[cond_open]
-                        .groupby(["id_attraction", "heure"])[col]
-                        .transform("mean")
-                    )
-                else:
-                    hourly_profile = (
-                        df_out[cond_open].groupby("heure")[col].transform("mean")
-                    )
-                df_out.loc[cond_open & df_out[col].isna(), col] = hourly_profile
+                mean_profile = (
+                    df_out[cond_open].groupby(group_attrs)[col].transform("mean")
+                )
+                mask_missing_open = cond_open & df_out[col].isna()
+                df_out.loc[mask_missing_open, col] = mean_profile[mask_missing_open]
 
+            # C. Fallback: Nội suy tuyến tính cho các trường hợp còn sót NaN
             if df_out[col].isna().any():
                 if "id_attraction" in df_out.columns:
                     df_out[col] = df_out.groupby("id_attraction")[col].transform(
-                        lambda grp: grp.interpolate(method="linear").ffill().bfill()
+                        lambda g: g.interpolate(method="linear").ffill().bfill()
                     )
                 else:
                     df_out[col] = (
                         df_out[col].interpolate(method="linear").ffill().bfill()
                     )
 
-            df_out[col] = df_out[col].clip(lower=0.0).round(2)
+            # D. Chỉ làm tròn số (để dành xử lý giá trị âm cho bước Outliers)
+            df_out[col] = df_out[col].round(2)
 
         return df_out
 
@@ -458,7 +583,6 @@ class MissingValueService:
         return s
 
     @classmethod
-    @classmethod
     def apply_imputation(
         cls,
         df: pd.DataFrame,
@@ -469,7 +593,6 @@ class MissingValueService:
         method = method.lower()
         params = params or {}
 
-        # 1. Các phương pháp luật nghiệp vụ áp dụng trên toàn bộ dataframe
         if method == "visitor_domain_rules":
             return cls.apply_visitor_domain_rules(df)
         elif method == "energy_domain_rules":
@@ -477,48 +600,37 @@ class MissingValueService:
 
         df_out = df.copy()
 
-        # 2. Lấy danh sách cột cần xử lý
         if not target_columns:
-            # Nếu người dùng không chọn cột nào, lấy tất cả các cột có chứa missing value
             valid_cols = [c for c in df_out.columns if df_out[c].isnull().sum() > 0]
         else:
-            # Chọn danh sách các cột người dùng đã gửi lên từ UI
             valid_cols = [c for c in target_columns if c in df_out.columns]
 
         if not valid_cols:
             return df_out
 
-        # 3. Lọc danh sách cột số (Numeric) để tránh lỗi khi dùng các thuật toán toán học/KNN
         numeric_cols = [
             c for c in valid_cols if np.issubdtype(df_out[c].dtype, np.number)
         ]
         non_numeric_cols = [c for c in valid_cols if c not in numeric_cols]
 
-        # 4. Xử lý theo phương pháp KNN (Cần chạy đồng thời trên tập danh sách nhiều cột số)
         if method == "knn":
             n_neighbors = int(params.get("n_neighbors", 5))
             if numeric_cols:
                 imputer = KNNImputer(n_neighbors=n_neighbors)
-                # Chạy KNNImputer trên tất cả các cột số được chọn cùng lúc
                 df_out[numeric_cols] = imputer.fit_transform(df_out[numeric_cols])
-                # Quét lấp kín mép biên nếu có
                 df_out[numeric_cols] = df_out[numeric_cols].ffill().bfill()
 
-            # Đối với cột non-numeric khi chọn KNN, fallback sang ffill/bfill
             for col in non_numeric_cols:
                 df_out[col] = df_out[col].ffill().bfill()
 
             return df_out
 
-        # 5. Xử lý các phương pháp đơn biến (mean, median, linear, polynomial...) cho DANH SÁCH NHIỀU CỘT
         if "id_attraction" in df_out.columns and df_out["id_attraction"].nunique() > 1:
-            # Nếu có nhiều id_attraction, nhóm theo id_attraction và apply từng cột trong danh sách
             for col in valid_cols:
                 df_out[col] = df_out.groupby("id_attraction")[col].transform(
                     lambda grp: cls._apply_method_to_series(grp, method, params)
                 )
         else:
-            # Chạy vòng lặp qua từng cột trong danh sách nhiều cột được chọn
             for col in valid_cols:
                 df_out[col] = cls._apply_method_to_series(df_out[col], method, params)
 
@@ -560,10 +672,13 @@ class MissingValueService:
             {col: int(processed_df[col].isnull().sum()) for col in processed_df.columns}
         )
 
-        # ĐÁNH SỐ TĂNG DẦN v1, v2, v3 TOÀN CỤC (Không phụ thuộc id_attr nữa để tránh trùng lặp)
+        # CẬP NHẬT: Lọc registry theo id_attraction để lấy chuỗi số đếm riêng
         with engine.connect() as conn:
             rows = conn.execute(
-                text(f"SELECT version_id FROM {SCHEMA_NAME}.data_version_registry")
+                text(
+                    f"SELECT version_id FROM {SCHEMA_NAME}.data_version_registry WHERE id_attraction = :id_attr"
+                ),
+                {"id_attr": id_attr},
             ).fetchall()
 
         existing_nums = []
@@ -576,8 +691,7 @@ class MissingValueService:
         next_ver = max(existing_nums) + 1 if existing_nums else 1
         attr_suffix = f"_{id_attr}" if id_attr != "ALL" else ""
 
-        # Tên version lúc này sẽ dạng: v1_mean_H03, v2_iqr_cap_H03, v3_iqr_cap_ALL,...
-        new_version_id = f"v{next_ver}_{method}_{attr_suffix}"  # (hoặc _{method} bên missing value)
+        new_version_id = f"v{next_ver}_{method}{attr_suffix}"
 
         saved_file_path = cls.save_version_dataframe(new_version_id, processed_df)
 
@@ -619,6 +733,7 @@ class MissingValueService:
             "step_type": "missing_value_imputation",
             "method": method,
             "method_label_fr": cls.METHOD_LABELS_FR.get(method, method),
+            "action": None,
             "target_columns": check_cols,
             "parameters": params_dict,
             "stats": stats_dict,
@@ -645,6 +760,9 @@ class MissingValueService:
             raise ValueError(
                 f"Không thể xóa '{version_id}' vì đang có các phiên bản phụ thuộc: {children}"
             )
+
+        if not re.match(r"^[a-zA-Z0-9_]+$", version_id):
+            raise ValueError("Tên version_id không hợp lệ.")
 
         with engine.connect() as conn:
             conn.execute(

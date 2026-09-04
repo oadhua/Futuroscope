@@ -382,8 +382,8 @@ export default function MissingValueModule() {
                                 <label style={styles.label}>4. Règle métier globale</label>
                                 <div style={styles.selectBox}>
                                     <select value={globalRule} onChange={(e) => setGlobalRule(e.target.value)} style={styles.select}>
-                                        <option value="visitor_domain_rules">Règles Fréquentation & Météo</option>
-                                        <option value="energy_domain_rules">Règles Énergie & Capteurs</option>
+                                        <option value="visitor_domain_rules">Règles fréquentation & météo</option>
+                                        <option value="energy_domain_rules">Règles énergie & capteurs</option>
                                     </select>
                                 </div>
                             </div>

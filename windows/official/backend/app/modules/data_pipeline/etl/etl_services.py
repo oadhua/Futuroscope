@@ -142,6 +142,7 @@ def process_and_store_dynamic_data(
     df_temps["date"] = df_temps["datetime"].dt.date
     df_temps["annee"] = df_temps["datetime"].dt.year
     df_temps["mois"] = df_temps["datetime"].dt.month
+    df_temps["semaine"] = df_temps["datetime"].dt.week
     df_temps["jour"] = df_temps["datetime"].dt.day
     df_temps["heure"] = df_temps["datetime"].dt.hour
     df_temps["jour_semaine"] = df_temps["datetime"].dt.dayofweek + 1
