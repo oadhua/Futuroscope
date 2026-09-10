@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, status
-from typing import Dict
+from fastapi import APIRouter, HTTPException, Query, status
+from typing import Dict, Optional
 
 from app.modules.data_pipeline.data_prep_schemas import (
     SharedVersionMetadataResponse,
@@ -15,12 +15,17 @@ router = APIRouter(prefix="/data-prep", tags=["Data Preparation - Shared"])
 @router.get(
     "/versions",
     response_model=Dict[str, SharedVersionMetadataResponse],
-    summary="Lấy danh sách tất cả phiên bản dữ liệu (Lineage Tree toàn hệ thống)",
+    summary="Lấy danh sách phiên bản dữ liệu (Có thể lọc theo step_type)",
 )
-def list_all_versions():
+def list_all_versions(
+    step_type: Optional[str] = Query(
+        None, 
+        description="Filter theo step_type (vd: missing_value_imputation, outlier_treatment)"
+    )
+):
     try:
-        # Gọi đọc dữ liệu từ bảng registry duy nhất trong DB
-        return MissingValueService._load_metadata_store()
+        # Truyền step_type vào service để lọc nếu có
+        return MissingValueService._load_metadata_store(step_type=step_type)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)

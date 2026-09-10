@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     CopyX, Filter, Layers, CheckSquare, Square,
-    Play, Trash2, AlertTriangle, CheckCircle2, X, RefreshCw
+    Play, Trash2, AlertTriangle, CheckCircle2, X, RefreshCw,
+    BarChart2, Table, Activity, Search
 } from 'lucide-react';
+
+const STEP_TYPE = 'deduplication';
 
 const KEEP_OPTIONS = [
     { value: 'first', label: 'Conserver la première occurrence (Recommandé)' },
@@ -11,33 +14,38 @@ const KEEP_OPTIONS = [
 ];
 
 export default function DeduplicationModule() {
-    const [versions, setVersions] = useState({});
-    const [selectedParent, setSelectedParent] = useState('v0_raw');
+    // 1. Quản lý danh sách Scope & Versions
     const [selectedAttraction, setSelectedAttraction] = useState('ALL');
+    const [selectedParent, setSelectedParent] = useState('v0_raw');
+    const [allVersions, setAllVersions] = useState({});
     const [availableAttractions, setAvailableAttractions] = useState([]);
 
+    // 2. Quản lý danh sách Cột & Thanh tìm kiếm
     const [availableColumns, setAvailableColumns] = useState([]);
     const [selectedColumns, setSelectedColumns] = useState([]);
-    
+    const [columnSearch, setColumnSearch] = useState('');
+
+    // 3. Paramètres Deduplication & Stats
+    const [keepOption, setKeepOption] = useState('first');
     const [totalDuplicates, setTotalDuplicates] = useState(0);
     const [totalRecords, setTotalRecords] = useState(0);
 
-    // Paramètres Deduplication
-    const [keepOption, setKeepOption] = useState('first');
-
+    // 4. Các trạng thái giao diện UI
     const [loading, setLoading] = useState(false);
+    const [fetchingStats, setFetchingStats] = useState(false);
     const [errorMsg, setErrorMsg] = useState(null);
     const [selectedVersion, setSelectedVersion] = useState(null);
+    const [activeTab, setActiveTab] = useState('summary');
 
-    const API_BASE = 'http://localhost:8000';
+    const API_BASE = 'http://localhost:8000/data-prep';
 
-    // 1. Fetch danh sách các version trong Registry
+    // Fetch TẤT CẢ các versions từ backend Registry
     const fetchVersions = async () => {
         try {
-            const res = await fetch(`${API_BASE}/data-prep/versions`);
+            const res = await fetch(`${API_BASE}/versions`);
             if (res.ok) {
                 const data = await res.json();
-                setVersions(data || {});
+                setAllVersions(data || {});
             }
         } catch (err) {
             console.error('Erreur lors du chargement des versions:', err);
@@ -48,34 +56,45 @@ export default function DeduplicationModule() {
         fetchVersions();
     }, []);
 
-    // 2. Tự động đồng bộ id_attraction từ version parent
-    useEffect(() => {
-        if (selectedParent && selectedParent !== 'v0_raw' && versions[selectedParent]) {
-            const parentObj = versions[selectedParent];
-            const parentAttr = parentObj.id_attraction || parentObj.attraction_id;
-            if (parentAttr) {
-                setSelectedAttraction(String(parentAttr));
-                return;
-            }
-        }
+    // Lọc danh sách Version hiển thị ở CỘT BÊN PHẢI (Chỉ giữ phiên bản thuộc Deduplication)
+    const moduleVersions = useMemo(() => {
+        return Object.values(allVersions).filter(v => {
+            if (!v) return false;
+            const step = (v.step_type || '').toLowerCase();
+            const method = (v.method || '').toLowerCase();
 
-        const match = selectedParent.match(/_(H\d+)$/i);
-        if (match) {
-            setSelectedAttraction(match[1].toUpperCase());
-        } else {
-            setSelectedAttraction('ALL');
-        }
-    }, [selectedParent, versions]);
+            const matchStep = step === STEP_TYPE ||
+                step === 'dedup' ||
+                step === 'remove_duplicates' ||
+                step === 'deduplication_module' ||
+                method.includes('dedup') ||
+                method.includes('duplicate');
 
-    // 3. Lấy danh sách cột và số lượng bản ghi trùng từ API Deduplication Router
+            if (!matchStep) return false;
+            if (selectedAttraction === 'ALL') return true;
+
+            const attrVal = v.id_attraction !== undefined ? v.id_attraction : v.attraction_id;
+            return !attrVal || attrVal === 'ALL' || String(attrVal) === String(selectedAttraction);
+        });
+    }, [allVersions, selectedAttraction]);
+
+    // Lọc danh sách Parent Version cho Dropdown
+    const parentVersionsList = useMemo(() => {
+        return Object.entries(allVersions).filter(([vId, vObj]) => {
+            if (vId === 'v0_raw') return true;
+            if (selectedAttraction === 'ALL') return true;
+
+            const attrVal = vObj?.id_attraction !== undefined ? vObj.id_attraction : vObj?.attraction_id;
+            return !attrVal || attrVal === 'ALL' || String(attrVal) === String(selectedAttraction);
+        });
+    }, [allVersions, selectedAttraction]);
+
+    // Fetch Statistiques từ Parent Version
     useEffect(() => {
         const fetchColumnsAndStats = async () => {
+            setFetchingStats(true);
             try {
-                const queryParams = new URLSearchParams({
-                    id_attraction: selectedAttraction
-                });
-
-                const url = `${API_BASE}/data-prep/deduplication/versions/${selectedParent}/stats?${queryParams.toString()}`;
+                const url = `${API_BASE}/deduplication/versions/${selectedParent}/stats?id_attraction=${selectedAttraction}`;
                 const res = await fetch(url);
 
                 if (res.ok) {
@@ -86,18 +105,23 @@ export default function DeduplicationModule() {
                     setTotalDuplicates(data.total_duplicates || 0);
                     setTotalRecords(data.total_records || 0);
 
-                    // Mặc định chọn tất cả cột
                     if (cols.length > 0) {
                         setSelectedColumns(prev => prev.length === 0 ? cols : prev);
                     }
 
+                    // Cập nhật danh sách attractions khả dụng khi chọn ALL
                     const attrs = data.available_attractions || [];
-                    if (Array.isArray(attrs) && attrs.length > 0) {
-                        setAvailableAttractions(attrs);
+                    if (selectedAttraction === 'ALL' && Array.isArray(attrs) && attrs.length > 0) {
+                        setAvailableAttractions(prev => {
+                            const merged = Array.from(new Set([...prev, ...attrs]));
+                            return merged.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+                        });
                     }
                 }
             } catch (err) {
-                console.error('Erreur lors du chargement des stats de doublons:', err);
+                console.error('Erreur lors du chargement des colonnes et stats:', err);
+            } finally {
+                setFetchingStats(false);
             }
         };
 
@@ -106,15 +130,34 @@ export default function DeduplicationModule() {
         }
     }, [selectedParent, selectedAttraction]);
 
-    const filteredVersions = useMemo(() => {
-        return Object.values(versions).filter(v => {
-            if (selectedAttraction === 'ALL') return true;
-            const attrVal = v.id_attraction || v.attraction_id;
-            if (!attrVal) return true;
-            return String(attrVal) === String(selectedAttraction);
-        });
-    }, [versions, selectedAttraction]);
+    // Tự động gom id_attraction từ tất cả phiên bản hiện có
+    useEffect(() => {
+        if (!allVersions || Object.keys(allVersions).length === 0) return;
 
+        const extractedAttrs = new Set();
+        Object.values(allVersions).forEach(v => {
+            const attrVal = v?.id_attraction !== undefined ? v.id_attraction : v?.attraction_id;
+            if (attrVal && attrVal !== 'ALL') {
+                extractedAttrs.add(String(attrVal));
+            }
+        });
+
+        if (extractedAttrs.size > 0) {
+            setAvailableAttractions(prev => {
+                const combined = Array.from(new Set([...prev, ...extractedAttrs]));
+                return combined.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+            });
+        }
+    }, [allVersions]);
+
+    // Filtered Columns cho thanh tìm kiếm
+    const filteredColumns = useMemo(() => {
+        return availableColumns.filter(col =>
+            col.toLowerCase().includes(columnSearch.toLowerCase())
+        );
+    }, [availableColumns, columnSearch]);
+
+    // Handlers chọn cột
     const handleToggleColumn = (col) => {
         setSelectedColumns(prev =>
             prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
@@ -124,8 +167,13 @@ export default function DeduplicationModule() {
     const handleSelectAllColumns = () => setSelectedColumns([...availableColumns]);
     const handleDeselectAllColumns = () => setSelectedColumns([]);
 
-    // 4. Thực thi Deduplication và lưu version vào PostgreSQL
+    // Thực thi Deduplication
     const handleExecute = async () => {
+        if (selectedColumns.length === 0) {
+            setErrorMsg('Veuillez sélectionner au moins une colonne clé pour la déduplication.');
+            return;
+        }
+
         setLoading(true);
         setErrorMsg(null);
 
@@ -137,7 +185,7 @@ export default function DeduplicationModule() {
         };
 
         try {
-            const res = await fetch(`${API_BASE}/data-prep/deduplication`, {
+            const res = await fetch(`${API_BASE}/deduplication`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -158,13 +206,13 @@ export default function DeduplicationModule() {
         }
     };
 
-    // 5. Xóa version khỏi PostgreSQL
+    // Xóa Version
     const handleDeleteVersion = async (e, versionId) => {
         e.stopPropagation();
         if (!window.confirm(`Êtes-vous sûr de vouloir supprimer la version ${versionId} ?`)) return;
 
         try {
-            const res = await fetch(`${API_BASE}/data-prep/versions/${versionId}`, { method: 'DELETE' });
+            const res = await fetch(`${API_BASE}/versions/${versionId}`, { method: 'DELETE' });
             if (!res.ok) {
                 const errorData = await res.json();
                 throw new Error(errorData.detail || 'Impossible de supprimer cette version.');
@@ -202,9 +250,30 @@ export default function DeduplicationModule() {
         }),
 
         actionBtn: { width: '100%', padding: '12px 18px', backgroundColor: '#ef4444', color: '#ffffff', fontWeight: '700', border: 'none', borderRadius: '16px', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background-color 0.2s', marginTop: '8px' },
-        smallBtn: { padding: '4px 8px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#ffffff', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer' },
+        smallBtn: (active) => ({
+            padding: '4px 8px', fontSize: '11px', fontWeight: 'bold',
+            backgroundColor: active ? '#fef2f2' : '#ffffff',
+            color: active ? '#dc2626' : '#475569',
+            border: '1px solid', borderColor: active ? '#fecaca' : '#e2e8f0',
+            borderRadius: '8px', cursor: 'pointer', transition: 'all 0.15s ease'
+        }),
+
+        kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '16px' },
+        kpiCard: { backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '4px' },
+        kpiTitle: { fontSize: '11px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
+        kpiValue: { fontSize: '18px', fontWeight: '800', color: '#0f172a' },
+
+        tabHeader: { display: 'flex', gap: '8px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px', marginBottom: '16px' },
+        tabBtn: (isActive) => ({
+            padding: '6px 14px', fontSize: '12px', fontWeight: '700', borderRadius: '12px', cursor: 'pointer', border: 'none',
+            backgroundColor: isActive ? '#ef4444' : '#f1f5f9', color: isActive ? '#ffffff' : '#64748b', transition: 'all 0.15s ease', display: 'flex', alignItems: 'center', gap: '6px'
+        }),
 
         resultCard: { backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '24px', padding: '20px', minWidth: 0 },
+        table: { width: '100%', borderCollapse: 'separate', borderSpacing: 0, backgroundColor: '#ffffff', borderRadius: '16px', overflow: 'hidden', fontSize: '13px', border: '1px solid #e2e8f0' },
+        th: { padding: '10px 14px', textAlign: 'left', color: '#475569', fontWeight: '700', borderBottom: '1px solid #e2e8f0', backgroundColor: '#f8fafc' },
+        td: { padding: '10px 14px', borderBottom: '1px solid #f1f5f9' },
+
         versionItem: (isSelected) => ({
             display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px', borderRadius: '16px', cursor: 'pointer',
             border: '1px solid', borderColor: isSelected ? '#ef4444' : '#e2e8f0', backgroundColor: isSelected ? '#fef2f2' : '#ffffff',
@@ -212,11 +281,17 @@ export default function DeduplicationModule() {
         })
     };
 
+    const targetCols = useMemo(() => {
+        if (!selectedVersion) return [];
+        const stats = selectedVersion.stats || {};
+        return selectedVersion.subset_columns || stats.key_columns || availableColumns;
+    }, [selectedVersion, availableColumns]);
+
     return (
         <div style={styles.wrapper}>
             <div style={styles.container}>
 
-                {/* HEADER */}
+                {/* HEADER CARD */}
                 <div style={styles.headerCard}>
                     <div style={styles.topBar}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -238,13 +313,13 @@ export default function DeduplicationModule() {
                 {/* GRID CONTENT */}
                 <div style={styles.gridContainer}>
 
-                    {/* PANEL CONFIGURATION */}
+                    {/* PANEL TRÁI: CẤU HÌNH XỬ LÝ */}
                     <div style={styles.card}>
-                        <h2 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: '700', color: '#0f172a', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px' }}>
-                            ⚙️ Configuration de la Déduplication
+                        <h2 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: '700', color: '#0f172a', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <CopyX size={18} color="#ef4444" /> Configuration de la Déduplication
                         </h2>
 
-                        {/* BANNIÈRE STATISTIQUES */}
+                        {/* BANNIÈRE STATISTIQUES RAPIDES */}
                         <div style={{ backgroundColor: totalDuplicates > 0 ? '#fef2f2' : '#f0fdf4', border: '1px solid', borderColor: totalDuplicates > 0 ? '#fecaca' : '#bbf7d0', padding: '12px 16px', borderRadius: '16px', marginBottom: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span style={{ fontSize: '13px', fontWeight: '600', color: totalDuplicates > 0 ? '#991b1b' : '#166534' }}>
                                 {totalDuplicates > 0 ? `⚠️ ${totalDuplicates} doublon(s) détecté(s)` : '✓ Aucun doublon détecté'}
@@ -254,23 +329,9 @@ export default function DeduplicationModule() {
                             </span>
                         </div>
 
-                        {/* 1. Version Source */}
+                        {/* 1. Scope Attraction */}
                         <div style={styles.formGroup}>
-                            <label style={styles.label}>1. Version Source (Parent)</label>
-                            <div style={styles.selectBox}>
-                                <Layers size={14} color="#94a3b8" />
-                                <select value={selectedParent} onChange={(e) => setSelectedParent(e.target.value)} style={styles.select}>
-                                    <option value="v0_raw">v0_raw (Données brutes DB)</option>
-                                    {Object.keys(versions).map((vId) => (
-                                        <option key={vId} value={vId}>{vId}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-
-                        {/* 2. Périmètre Attraction */}
-                        <div style={styles.formGroup}>
-                            <label style={styles.label}>2. Périmètre Attraction (id_attraction)</label>
+                            <label style={styles.label}>1. Scope Attraction (id_attraction)</label>
                             <div style={{ ...styles.selectBox, backgroundColor: '#f0f9ff', borderColor: '#bae6fd' }}>
                                 <Filter size={14} color="#0284c7" />
                                 <select value={selectedAttraction} onChange={(e) => setSelectedAttraction(e.target.value)} style={{ ...styles.select, color: '#0369a1' }}>
@@ -282,32 +343,75 @@ export default function DeduplicationModule() {
                             </div>
                         </div>
 
-                        {/* 3. Selection des Colonnes clefs pour la détection */}
+                        {/* 2. Version Source (Parent) */}
                         <div style={styles.formGroup}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                <label style={{ ...styles.label, margin: 0 }}>3. Colonnes Clefs ({selectedColumns.length}/{availableColumns.length})</label>
-                                <div style={{ display: 'flex', gap: '4px' }}>
-                                    <button type="button" onClick={handleSelectAllColumns} style={styles.smallBtn}>Tout</button>
-                                    <button type="button" onClick={handleDeselectAllColumns} style={styles.smallBtn}>Aucun</button>
-                                </div>
-                            </div>
-
-                            <div style={styles.checkboxContainer}>
-                                {availableColumns.map((col) => {
-                                    const isChecked = selectedColumns.includes(col);
-                                    return (
-                                        <div key={col} onClick={() => handleToggleColumn(col)} style={styles.checkboxItem(isChecked)}>
-                                            {isChecked ? <CheckSquare size={16} color="#ef4444" /> : <Square size={16} color="#94a3b8" />}
-                                            <span style={{ fontWeight: isChecked ? '700' : '500', color: '#1e293b', wordBreak: 'break-all', flex: 1 }}>
-                                                {col}
-                                            </span>
-                                        </div>
-                                    );
-                                })}
+                            <label style={styles.label}>2. Version Source (Parent)</label>
+                            <div style={styles.selectBox}>
+                                <Layers size={14} color="#94a3b8" />
+                                <select value={selectedParent} onChange={(e) => setSelectedParent(e.target.value)} style={styles.select}>
+                                    <option value="v0_raw">v0_raw</option>
+                                    {parentVersionsList.map(([vId, vObj]) => {
+                                        if (vId === 'v0_raw') return null;
+                                        return (
+                                            <option key={vId} value={vId}>
+                                                {vId} {vObj?.step_type ? `(${vObj.step_type})` : ''}
+                                            </option>
+                                        );
+                                    })}
+                                </select>
                             </div>
                         </div>
 
-                        {/* 4. Strategie de Conservation */}
+                        {/* 3. Sélection des Colonnes Clefs */}
+                        <div style={styles.formGroup}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <label style={{ ...styles.label, margin: 0 }}>
+                                    3. Colonnes Clefs ({selectedColumns.length}/{availableColumns.length})
+                                </label>
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                    <button type="button" onClick={handleSelectAllColumns} style={styles.smallBtn(false)}>Tout</button>
+                                    <button type="button" onClick={handleDeselectAllColumns} style={styles.smallBtn(false)}>Aucun</button>
+                                </div>
+                            </div>
+
+                            {/* Column Search Box */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '6px 10px', borderRadius: '12px', marginBottom: '8px' }}>
+                                <Search size={14} color="#94a3b8" />
+                                <input
+                                    type="text"
+                                    placeholder="Rechercher une colonne..."
+                                    value={columnSearch}
+                                    onChange={(e) => setColumnSearch(e.target.value)}
+                                    style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '12px', width: '100%', color: '#0f172a' }}
+                                />
+                            </div>
+
+                            <div style={styles.checkboxContainer}>
+                                {fetchingStats ? (
+                                    <div style={{ fontSize: '12px', color: '#94a3b8', padding: '12px', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                                        <RefreshCw className="animate-spin" size={14} /> Chargement des colonnes...
+                                    </div>
+                                ) : filteredColumns.length === 0 ? (
+                                    <div style={{ fontSize: '12px', color: '#94a3b8', padding: '8px', textAlign: 'center' }}>
+                                        Aucune colonne disponible
+                                    </div>
+                                ) : (
+                                    filteredColumns.map((col) => {
+                                        const isChecked = selectedColumns.includes(col);
+                                        return (
+                                            <div key={col} onClick={() => handleToggleColumn(col)} style={styles.checkboxItem(isChecked)}>
+                                                {isChecked ? <CheckSquare size={16} color="#ef4444" /> : <Square size={16} color="#94a3b8" />}
+                                                <span style={{ fontWeight: isChecked ? '700' : '500', color: '#1e293b', wordBreak: 'break-all', flex: 1 }}>
+                                                    {col}
+                                                </span>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        </div>
+
+                        {/* 4. Stratégie de Conservation */}
                         <div style={styles.formGroup}>
                             <label style={styles.label}>4. Stratégie de Conservation</label>
                             <div style={styles.selectBox}>
@@ -321,7 +425,7 @@ export default function DeduplicationModule() {
 
                         <button onClick={handleExecute} disabled={loading} style={{ ...styles.actionBtn, backgroundColor: loading ? '#94a3b8' : '#ef4444' }}>
                             {loading ? <RefreshCw className="animate-spin" size={16} /> : <Play size={16} />}
-                            {loading ? 'Suppression dans PostgreSQL...' : 'Exécuter la Déduplication'}
+                            {loading ? 'Suppression dans PostgreSQL...' : `Lancer la Déduplication (${selectedColumns.length})`}
                         </button>
 
                         {errorMsg && (
@@ -332,16 +436,17 @@ export default function DeduplicationModule() {
                         )}
                     </div>
 
-                    {/* PANEL DROIT: RAPPORT & VERSIONS */}
+                    {/* PANEL PHẢI: BÁO CÁO CHI TIẾT & DANH SÁCH VERSION */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', minWidth: 0 }}>
 
+                        {/* RAPPORT DE LA VERSION SÉLECTIONNÉE */}
                         {selectedVersion ? (
                             <div style={styles.resultCard}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                         <CheckCircle2 size={18} color="#991b1b" />
                                         <span style={{ fontWeight: '800', color: '#991b1b', fontSize: '14px' }}>
-                                            Rapport de Déduplication (PostgreSQL Table)
+                                            Rapport de Déduplication
                                         </span>
                                     </div>
                                     <button onClick={() => setSelectedVersion(null)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}>
@@ -349,7 +454,7 @@ export default function DeduplicationModule() {
                                     </button>
                                 </div>
 
-                                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
                                     <span style={{ backgroundColor: '#fecaca', color: '#991b1b', fontFamily: 'monospace', fontSize: '12px', padding: '4px 8px', borderRadius: '8px', fontWeight: 'bold' }}>
                                         {selectedVersion.version_id}
                                     </span>
@@ -358,41 +463,120 @@ export default function DeduplicationModule() {
                                     </span>
                                 </div>
 
-                                <div style={{ fontSize: '12px', color: '#334155', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                    <div><strong>Méthode :</strong> {selectedVersion.method_label_fr || selectedVersion.method}</div>
-                                    <div><strong>Version Parent :</strong> <code>{selectedVersion.parent_version_id}</code></div>
-                                    <div><strong>Lignes Avant :</strong> {selectedVersion.stats?.rows_before}</div>
-                                    <div><strong>Lignes Après :</strong> {selectedVersion.stats?.rows_after}</div>
-                                    <div style={{ color: '#dc2626', fontWeight: '700' }}>
-                                        <strong>Doublons Supprimés :</strong> {selectedVersion.stats?.duplicates_removed}
+                                <div style={styles.kpiGrid}>
+                                    <div style={styles.kpiCard}>
+                                        <span style={styles.kpiTitle}>Lignes Avant</span>
+                                        <span style={styles.kpiValue}>
+                                            {selectedVersion.stats?.rows_before?.toLocaleString() || 'N/A'}
+                                        </span>
+                                    </div>
+                                    <div style={styles.kpiCard}>
+                                        <span style={styles.kpiTitle}>Lignes Après</span>
+                                        <span style={{ ...styles.kpiValue, color: '#166534' }}>
+                                            {selectedVersion.stats?.rows_after?.toLocaleString() || 'N/A'}
+                                        </span>
+                                    </div>
+                                    <div style={styles.kpiCard}>
+                                        <span style={styles.kpiTitle}>Doublons Supprimés</span>
+                                        <span style={{ ...styles.kpiValue, color: '#dc2626' }}>
+                                            {selectedVersion.stats?.duplicates_removed?.toLocaleString() || '0'}
+                                        </span>
                                     </div>
                                 </div>
+
+                                <div style={styles.tabHeader}>
+                                    <button onClick={() => setActiveTab('summary')} style={styles.tabBtn(activeTab === 'summary')}>
+                                        <Table size={14} /> Colonnes clés ({targetCols.length})
+                                    </button>
+                                    <button onClick={() => setActiveTab('columns')} style={styles.tabBtn(activeTab === 'columns')}>
+                                        <BarChart2 size={14} /> Aperçu de la Table SQL
+                                    </button>
+                                </div>
+
+                                {activeTab === 'summary' && (
+                                    <div style={{ overflowX: 'auto' }}>
+                                        <table style={styles.table}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={styles.th}>Colonne Clé</th>
+                                                    <th style={{ ...styles.th, textAlign: 'center' }}>Statut</th>
+                                                    <th style={{ ...styles.th, textAlign: 'center' }}>Règle de conservation</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {targetCols.length === 0 ? (
+                                                    <tr>
+                                                        <td colSpan="3" style={{ ...styles.td, textAlign: 'center', color: '#94a3b8' }}>
+                                                            Toutes les colonnes ont été incluses pour vérifier les doublons.
+                                                        </td>
+                                                    </tr>
+                                                ) : (
+                                                    targetCols.map((col) => (
+                                                        <tr key={col}>
+                                                            <td style={styles.td}>
+                                                                <code style={{ fontWeight: '700', color: '#0f172a' }}>{col}</code>
+                                                            </td>
+                                                            <td style={{ ...styles.td, textAlign: 'center' }}>
+                                                                <span style={{ backgroundColor: '#dcfce7', color: '#15803d', fontSize: '11px', fontWeight: '800', padding: '2px 8px', borderRadius: '6px' }}>
+                                                                    ✓ Vérifiée
+                                                                </span>
+                                                            </td>
+                                                            <td style={{ ...styles.td, textAlign: 'center', color: '#ef4444', fontWeight: '800', fontSize: '12px' }}>
+                                                                {selectedVersion.keep ? `Keep ${selectedVersion.keep}` : 'Conserver première'}
+                                                            </td>
+                                                        </tr>
+                                                    ))
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+
+                                {activeTab === 'columns' && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                        <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', padding: '12px 16px', borderRadius: '14px', fontSize: '12px' }}>
+                                            <div style={{ fontWeight: '700', color: '#0f172a', marginBottom: '6px' }}>
+                                                📄 Table SQL Générée dans PostgreSQL
+                                            </div>
+                                            <code style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '6px 10px', borderRadius: '8px', display: 'block', color: '#ef4444', fontWeight: 'bold' }}>
+                                                {selectedVersion.file_path || `dedup_${selectedVersion.version_id}`}
+                                            </code>
+                                        </div>
+
+                                        <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', padding: '12px 16px', borderRadius: '14px', fontSize: '12px', color: '#475569' }}>
+                                            <div><strong>Version Parent :</strong> <code>{selectedVersion.parent_version_id}</code></div>
+                                            <div style={{ marginTop: '4px' }}><strong>Méthode d'exécution :</strong> {selectedVersion.method_label_fr || selectedVersion.method}</div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div style={{ ...styles.card, borderStyle: 'dashed', textAlign: 'center', color: '#64748b', fontSize: '13px', padding: '24px' }}>
-                                💡 <i>Sélectionnez une version ci-dessous pour consulter son rapport PostgreSQL.</i>
+                                <Activity size={28} color="#94a3b8" style={{ marginBottom: '8px' }} />
+                                <div>💡 <i>Sélectionnez une version ci-dessous pour consulter son rapport détaillé.</i></div>
                             </div>
                         )}
 
-                        {/* LISTE DES VERSIONS */}
+                        {/* DANH SÁCH VERSION ĐÃ LỌC THEO MODULE VÀ ATTRACTION */}
                         <div style={styles.card}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px' }}>
                                 <h2 style={{ margin: 0, fontSize: '15px', fontWeight: '700', color: '#0f172a' }}>
-                                    📂 Versions Enregistrées dans Registry
+                                    📂 Versions Enregistrées
                                 </h2>
                                 <span style={{ fontSize: '11px', fontWeight: '700', color: '#0369a1', backgroundColor: '#e0f2fe', padding: '2px 8px', borderRadius: '10px' }}>
                                     {selectedAttraction === 'ALL' ? 'Tous les sites' : `Attraction: ${selectedAttraction}`}
                                 </span>
                             </div>
 
-                            {filteredVersions.length === 0 ? (
+                            {moduleVersions.length === 0 ? (
                                 <p style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '13px', margin: 0 }}>
-                                    Aucune version enregistrée.
+                                    Aucune version enregistrée pour {selectedAttraction === 'ALL' ? 'tous les sites' : `l'attraction ${selectedAttraction}`}.
                                 </p>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    {filteredVersions.map((v) => {
+                                    {moduleVersions.map((v) => {
                                         const isSelected = selectedVersion && selectedVersion.version_id === v.version_id;
+                                        const attrValue = v.id_attraction !== undefined ? v.id_attraction : v.attraction_id;
                                         return (
                                             <div key={v.version_id} onClick={() => setSelectedVersion(v)} style={styles.versionItem(isSelected)}>
                                                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -403,6 +587,11 @@ export default function DeduplicationModule() {
                                                         <span style={{ backgroundColor: '#f1f5f9', color: '#475569', fontSize: '11px', padding: '2px 6px', borderRadius: '6px', fontWeight: '600' }}>
                                                             {v.method_label_fr || v.method}
                                                         </span>
+                                                        {attrValue && (
+                                                            <span style={{ backgroundColor: '#e0f2fe', color: '#0369a1', fontSize: '10px', padding: '2px 6px', borderRadius: '6px', fontWeight: '700' }}>
+                                                                {attrValue}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                     <p style={{ fontSize: '11px', color: '#64748b', margin: '4px 0 0 0' }}>
                                                         Parent: <code>{v.parent_version_id}</code>

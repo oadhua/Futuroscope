@@ -19,6 +19,8 @@ from app.modules.data_pipeline.timeseries_transformation.timeseries_transformati
 from app.modules.data_pipeline.trace.trace_router import router as trace_router
 from app.modules.data_pipeline.feature_selection.feature_selection_router import router as feature_selection_router
 from app.modules.ml_pipeline.training.training_router import router as training_router
+from app.modules.ml_pipeline.ml_inference.ml_inference_router import router as ml_inference_router
+from app.modules.ml_pipeline.future_forecast.future_forecast_router import router as future_forecast_router
 from app.core.database import engine
 
 # Khởi tạo ứng dụng FastAPI
@@ -62,6 +64,8 @@ app.include_router(timeseries_trans_router)
 app.include_router(trace_router)
 app.include_router(feature_selection_router)
 app.include_router(training_router)
+app.include_router(ml_inference_router)
+app.include_router(future_forecast_router)
 Base.metadata.create_all(bind=engine)
 
 

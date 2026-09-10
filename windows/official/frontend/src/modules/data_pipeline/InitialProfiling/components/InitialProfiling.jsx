@@ -107,15 +107,43 @@ export default function InitialProfiling() {
         fetchVersions();
     }, [selectedAttraction]);
 
-    // 3. Lọc Version ở Frontend theo Attraction
+    // 3. Lọc và Sắp xếp Version TĂNG DẦN theo thời gian tạo (Mới nhất nằm cuối cùng)
     const filteredVersions = useMemo(() => {
-        if (!selectedAttraction || selectedAttraction === 'ALL') {
-            return allVersions;
+        let versionsList = [...allVersions];
+
+        // Lọc theo Attraction nếu được chọn
+        if (selectedAttraction && selectedAttraction !== 'ALL') {
+            const attrUpper = selectedAttraction.toUpperCase();
+            versionsList = versionsList.filter(v => {
+                const verId = v.version_id.toUpperCase();
+                return verId.startsWith('V') || verId.includes(attrUpper);
+            });
         }
-        const attrUpper = selectedAttraction.toUpperCase();
-        return allVersions.filter(v => {
-            const verId = v.version_id.toUpperCase();
-            return verId === 'V0_RAW' || verId === 'V1' || verId.includes(attrUpper);
+
+        // Sắp xếp an toàn
+        return versionsList.sort((a, b) => {
+            // Chuyển đổi định dạng Date an toàn (thay khoảng trắng bằng 'T' nếu có)
+            const parseDate = (dateStr) => {
+                if (!dateStr) return null;
+                const formatted = String(dateStr).replace(' ', 'T');
+                const time = new Date(formatted).getTime();
+                return isNaN(time) ? null : time;
+            };
+
+            const timeA = parseDate(a.created_at);
+            const timeB = parseDate(b.created_at);
+
+            // Trường hợp 1: Cả 2 đều có created_at hợp lệ -> So sánh thời gian
+            if (timeA !== null && timeB !== null) {
+                return timeA - timeB; // Tăng dần: Cũ trước, Mới sau
+            }
+
+            // Trường hợp 2: Nếu 1 trong 2 thiếu created_at, ưu tiên v0_raw luôn ở đầu
+            if (a.version_id.toLowerCase() === 'v0_raw') return -1;
+            if (b.version_id.toLowerCase() === 'v0_raw') return 1;
+
+            // Trường hợp 3: Fallback sắp xếp theo tên version
+            return a.version_id.localeCompare(b.version_id, undefined, { numeric: true, sensitivity: 'base' });
         });
     }, [allVersions, selectedAttraction]);
 
@@ -317,7 +345,7 @@ export default function InitialProfiling() {
                     <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a', marginBottom: '16px' }}>
                         Choisissez la version des données
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', overflowX: 'auto' }}>
                         {filteredVersions.map((v, index) => {
                             const isSelected = selectedVersion === v.version_id;
                             const isLast = index === filteredVersions.length - 1;

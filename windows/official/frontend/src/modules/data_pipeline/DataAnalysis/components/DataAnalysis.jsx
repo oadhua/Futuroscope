@@ -364,7 +364,7 @@ export default function DataAnalysis() {
                                 <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
                                     Choisissez la version des données
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', overflowX: 'auto' }}>
                                     {filteredVersionList.map((ver, index) => {
                                         const isSelected = selectedVersion === ver;
                                         const isLast = index === filteredVersionList.length - 1;
@@ -429,9 +429,9 @@ export default function DataAnalysis() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                                 <div>
                                     <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
-                                        Choisissez la version initiale (V1)
+                                        Choisissez la version initiale
                                     </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', overflowX: 'auto' }}>
                                         {filteredVersionList.map((ver, index) => {
                                             const isSelected = v1Version === ver;
                                             const isLast = index === filteredVersionList.length - 1;
@@ -466,9 +466,9 @@ export default function DataAnalysis() {
 
                                 <div>
                                     <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
-                                        Choisissez la version mise à jour (V2)
+                                        Choisissez la version mise à jour
                                     </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', overflowX: 'auto' }}>
                                         {filteredVersionList.map((ver, index) => {
                                             const isSelected = v2Version === ver;
                                             const isLast = index === filteredVersionList.length - 1;
@@ -608,7 +608,6 @@ export default function DataAnalysis() {
                                                         ))}
                                                     </Pie>
                                                     <Tooltip formatter={(val, name) => [`${val}%`, `Attraction: ${name}`]} />
-                                                    <Legend />
                                                 </PieChart>
                                             </ResponsiveContainer>
                                         ) : (
@@ -641,7 +640,6 @@ export default function DataAnalysis() {
                                                             return [`${value.toLocaleString()} lignes (${percent}%)`, `Version: ${name}`];
                                                         }}
                                                     />
-                                                    <Legend />
                                                 </PieChart>
                                             </ResponsiveContainer>
                                         ) : (

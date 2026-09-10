@@ -25,6 +25,13 @@ class ScalingService:
         "robust": "Normalisation Robuste (RobustScaler)",
     }
 
+    # Tập hợp các cột cố định cần loại trừ khỏi Scaling
+    EXCLUDE_COLS = {
+        "id_attraction",
+        "datetime",
+        "date",
+    }
+
     # ==================== GESTION DU STOCKAGE POSTGRESQL ====================
 
     @classmethod
@@ -94,9 +101,7 @@ class ScalingService:
                 SELECT column_name FROM information_schema.columns 
                 WHERE table_schema = :s AND table_name = :t AND column_name = 'datetime'
             """)
-            if conn.execute(
-                cols_query, {"s": SCHEMA_NAME, "t": version_id}
-            ).fetchone():
+            if conn.execute(cols_query, {"s": SCHEMA_NAME, "t": version_id}).fetchone():
                 order_clause = " ORDER BY datetime ASC"
 
             df = pd.read_sql(
@@ -144,34 +149,27 @@ class ScalingService:
     ) -> Tuple[pd.DataFrame, List[str], int]:
         df_out = df.copy()
 
-        # Exclusion des identifiants et des variables temporelles
-        exclude_cols = {
-            "id_attraction",
-            "datetime",
-            "date",
-            "heure",
-            "jour",
-            "mois",
-            "annee",
-        }
-
+        # Lọc nghiêm ngặt: Chỉ chọn cột là kiểu số (np.number) và không thuộc EXCLUDE_COLS
         if target_columns:
             valid_cols = [
                 c
                 for c in target_columns
-                if c in df_out.columns and c not in exclude_cols
+                if c in df_out.columns
+                and c not in cls.EXCLUDE_COLS
+                and np.issubdtype(df_out[c].dtype, np.number)
             ]
         else:
             valid_cols = [
                 c
                 for c in df_out.columns
-                if np.issubdtype(df_out[c].dtype, np.number) and c not in exclude_cols
+                if np.issubdtype(df_out[c].dtype, np.number)
+                and c not in cls.EXCLUDE_COLS
             ]
 
         if not valid_cols:
             return df_out, [], 0
 
-        # Initialisation du Scaler approprié
+        # Initialisation du Scaler
         if method == "standard":
             scaler = StandardScaler()
         elif method == "min_max":
@@ -202,9 +200,7 @@ class ScalingService:
     ) -> Dict[str, Any]:
         cls._init_db_schema()
         id_attr = id_attraction or "ALL"
-        parent_df = cls.load_version_dataframe(
-            parent_version_id, id_attraction=id_attr
-        )
+        parent_df = cls.load_version_dataframe(parent_version_id, id_attraction=id_attr)
         target_columns = target_columns or []
         params = params or {}
 
@@ -286,25 +282,23 @@ class ScalingService:
         """
         Lấy danh sách các cột số khả dụng, tổng số bản ghi và danh sách id_attraction từ version.
         """
+        # 1. Load TOÀN BỘ dữ liệu (id_attraction="ALL") để lấy danh sách đầy đủ tất cả ID
+        full_df = cls.load_version_dataframe(version_id, id_attraction="ALL")
+        available_attractions = []
+        if "id_attraction" in full_df.columns:
+            available_attractions = sorted(
+                full_df["id_attraction"].astype(str).unique().tolist()
+            )
+
+        # 2. Load dữ liệu theo id_attraction truyền vào để tính số dòng và các cột tương ứng
         df = cls.load_version_dataframe(version_id, id_attraction=id_attraction)
 
-        exclude_cols = {
-            "id_attraction",
-            "datetime",
-            "date",
-        }
-
-        # Lấy các cột kiểu số khả dụng
         available_columns = [
-            c for c in df.columns 
-            if np.issubdtype(df[c].dtype, np.number) and c not in exclude_cols
+            c
+            for c in df.columns
+            if np.issubdtype(df[c].dtype, np.number) and c not in cls.EXCLUDE_COLS
         ]
 
         total_records = len(df)
-
-        # Lấy danh sách id_attraction khả dụng
-        available_attractions = []
-        if "id_attraction" in df.columns:
-            available_attractions = sorted(df["id_attraction"].astype(str).unique().tolist())
 
         return available_columns, total_records, available_attractions

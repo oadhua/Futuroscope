@@ -9,38 +9,50 @@ from app.modules.data_pipeline.queries import get_dynamic_gathering_query
 
 
 def get_data_prep_versions_service(db: Session) -> List[str]:
-    """Lấy danh sách tất cả các bảng phiên bản trong schema data_prep (bỏ qua các bảng hệ thống)."""
+    """
+    Lấy danh sách các bảng phiên bản trong schema data_prep 
+    được sắp xếp theo thứ tự thời gian tạo (ID bảng / OID tăng dần).
+    """
     db.commit()
-    connection = db.connection()
-    inspector = inspect(connection)
+
+    # Truy vấn lấy tất cả các bảng vật lý trong schema data_prep theo thứ tự OID (thời gian tạo bảng)
+    query_primary = text("""
+        SELECT c.relname
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'data_prep' 
+          AND c.relkind = 'r'
+          AND c.relname NOT IN ('data_version_registry', 'ml_model_registry')
+        ORDER BY c.oid ASC;
+    """)
 
     try:
-        tables = inspector.get_table_names(schema="data_prep")
-    except Exception:
+        result = db.execute(query_primary).fetchall()
+        tables = [row[0] for row in result]
+    except Exception as e:
+        db.rollback()  # Reset transaction khi gặp lỗi SQL
         tables = []
 
+    # Phương án dự phòng dùng SQLAlchemy Inspector nếu truy vấn pg_class thất bại
     if not tables:
-        query = text("""
-            SELECT c.relname 
-            FROM pg_class c
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'data_prep' 
-              AND c.relkind = 'r'
-            ORDER BY c.relname ASC;
-        """)
-        result = db.execute(query).fetchall()
-        tables = [row[0] for row in result]
+        try:
+            connection = db.connection()
+            inspector = inspect(connection)
+            tables = inspector.get_table_names(schema="data_prep")
+            EXCLUDED_TABLES = {"data_version_registry", "ml_model_registry"}
+            tables = [t for t in tables if t.lower() not in EXCLUDED_TABLES]
+        except Exception:
+            db.rollback()
+            tables = []
 
-    # 1. LỌC BỎ các bảng hệ thống / registry
-    EXCLUDED_TABLES = {"data_version_registry"}
-    tables = [t for t in tables if t.lower() not in EXCLUDED_TABLES]
-
-    tables = sorted(tables)
-    if "v0_raw" not in tables:
+    # Xử lý vị trí v0_raw luôn ở đầu danh sách
+    if "v0_raw" in tables:
+        tables.remove("v0_raw")
         tables.insert(0, "v0_raw")
+    elif not tables:
+        tables = ["v0_raw"]
 
     return tables
-
 
 def get_dataframe_from_version(
     db: Session, version_id: str, id_attraction: str = None

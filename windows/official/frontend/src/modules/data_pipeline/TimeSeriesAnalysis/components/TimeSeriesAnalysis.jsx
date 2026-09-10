@@ -363,9 +363,9 @@ export default function TimeSeriesAnalysis() {
                     {/* STEPPER CHỌN VERSION ĐỒNG BỘ THEO SINGLE COLUMN */}
                     <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '20px 24px', width: '100%', boxSizing: 'border-box' }}>
                         <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
-                            Choisissez la version des données pour l'analyse temporelle
+                            Choisissez la version des données
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', overflowX: 'auto'}}>
                             {filteredVersionList.map((ver, index) => {
                                 const isSelected = selectedVersion === ver;
                                 const isLast = index === filteredVersionList.length - 1;

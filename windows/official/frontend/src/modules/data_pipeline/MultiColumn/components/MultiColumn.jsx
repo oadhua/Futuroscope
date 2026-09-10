@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import Plot from 'react-plotly.js';
 
-// Hàm tự động tạo màu phân bố đều theo không gian HSL cho các version (tương tự SingleColumn)
+// Hàm tự động tạo màu phân bố đều theo không gian HSL cho các version
 const getDynamicColor = (index, total) => {
     if (total <= 1) return '#059669';
     const hue = Math.round((index * 360) / total);
@@ -35,12 +35,16 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
     useEffect(() => {
         const fetchMeta = async () => {
             try {
-                // Fetch danh sách Versions
+                // Fetch danh sách Versions (Lọc bỏ luôn các bảng hệ thống registry)
                 const resSchema = await fetch('http://localhost:8000/analysis/versions-schema');
                 if (resSchema.ok) {
                     const resData = await resSchema.json();
                     const list = resData.versions || resData || [];
-                    const vIds = list.map(v => typeof v === 'string' ? v : (v.version_id || v.table_name));
+                    const excluded = ['data_version_registry', 'ml_model_registry'];
+                    const vIds = list
+                        .map(v => typeof v === 'string' ? v : (v.version_id || v.table_name))
+                        .filter(vName => !excluded.includes(vName));
+
                     if (!vIds.includes('v0_raw')) vIds.unshift('v0_raw');
                     setAllVersions([...new Set(vIds)]);
                 }
@@ -105,7 +109,6 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
             const resData = await response.json();
             setData(resData);
 
-            // Cập nhật các cột khả dụng cho Dropdown Cột mục tiêu
             if (resData.correlation_matrix?.columns?.length > 0) {
                 const colsList = resData.correlation_matrix.columns;
                 setAvailableColumns(colsList);
@@ -143,15 +146,44 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
     const funcDeps = useMemo(() => data?.functional_dependencies || [], [data]);
     const sampleData = useMemo(() => data?.sample_data || [], [data]);
 
-    // --- Styles đồng bộ theo SingleColumn & DataAnalysis ---
+    // --- Styles đã tối ưu chống vỡ layout ---
     const styles = {
         wrapper: { minHeight: '100vh', backgroundColor: '#f8fafc', padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' },
         container: { maxWidth: '1360px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' },
         card: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)', boxSizing: 'border-box' },
         headerCard: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' },
-        topBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' },
-        selectBox: { display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '8px 14px', borderRadius: '16px', fontSize: '12px', minWidth: '180px' },
-        select: { border: 'none', background: 'transparent', fontWeight: 'bold', color: '#0f172a', outline: 'none', cursor: 'pointer', appearance: 'none', width: '100%', lineHeight: '1' },
+
+        // Cố định TopBar chống co/nhảy dòng khi nội dung biến đổi
+        topBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'nowrap', gap: '16px', width: '100%' },
+
+        // Khống chế ô SelectBox chống việc kéo dãn width linh tinh
+        selectBox: {
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            backgroundColor: '#f8fafc',
+            border: '1px solid #e2e8f0',
+            padding: '8px 12px',
+            borderRadius: '16px',
+            fontSize: '12px',
+            width: '210px',
+            boxSizing: 'border-box',
+            flexShrink: 0
+        },
+        select: {
+            border: 'none',
+            background: 'transparent',
+            fontWeight: 'bold',
+            color: '#0f172a',
+            outline: 'none',
+            cursor: 'pointer',
+            appearance: 'none',
+            width: '100%',
+            lineHeight: '1',
+            textOverflow: 'ellipsis',
+            overflow: 'hidden',
+            whiteSpace: 'nowrap'
+        },
         kpiGrid: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '12px 16px', display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' },
         kpiItem: { display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 4px', minWidth: 0 },
         iconBg: (bg, color) => ({ backgroundColor: bg, color: color, padding: '10px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }),
@@ -178,36 +210,37 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
                 {/* 1. HEADER CARD & STEPPER VERSION */}
                 <div style={styles.headerCard}>
                     <div style={styles.topBar}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
                             <div style={styles.iconBg('#eff6ff', '#2563eb')}>
                                 <Columns size={24} />
                             </div>
-                            <div>
-                                <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', lineHeight: '1.2' }}>
+                            <div style={{ minWidth: 0 }}>
+                                <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', lineHeight: '1.2', whiteSpace: 'nowrap' }}>
                                     Profilage Multi-Colonnes
                                 </h1>
-                                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94a3b8', fontWeight: '600', lineHeight: '1.2' }}>
+                                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94a3b8', fontWeight: '600', lineHeight: '1.2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                     Target : <span style={{ color: '#2563eb' }}>{targetVar}</span> | Version : <span style={{ color: '#059669' }}>{selectedVersion}</span>
                                 </p>
                             </div>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                        {/* Cố định cụm nút lọc bên phải */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
                             {/* Filtre Attraction */}
                             <div style={styles.selectBox}>
-                                <Filter size={14} color="#94a3b8" />
-                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Attraction :</span>
+                                <Filter size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
+                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Attraction :</span>
                                 <select value={selectedAttraction} onChange={(e) => handleAttractionChange(e.target.value)} style={styles.select}>
                                     <option value="ALL">Toutes les attractions</option>
                                     {attractionList.map(id => <option key={id} value={id}>Attraction {id}</option>)}
                                 </select>
-                                <ChevronDown size={14} color="#94a3b8" />
+                                <ChevronDown size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
                             </div>
 
                             {/* Filtre Variable Cột mục tiêu */}
                             <div style={styles.selectBox}>
-                                <Sliders size={14} color="#94a3b8" />
-                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Variable :</span>
+                                <Sliders size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
+                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Variable :</span>
                                 <select value={targetVar} onChange={(e) => setTargetVar(e.target.value)} style={styles.select}>
                                     {availableColumns.length > 0 ? (
                                         availableColumns.map(col => <option key={col} value={col}>{col}</option>)
@@ -215,17 +248,24 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
                                         <option value={targetVar}>{targetVar}</option>
                                     )}
                                 </select>
-                                <ChevronDown size={14} color="#94a3b8" />
+                                <ChevronDown size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
                             </div>
                         </div>
                     </div>
 
-                    {/* STEPPER CHỌN VERSION */}
-                    <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '20px 24px', width: '100%', boxSizing: 'border-box' }}>
-                        <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
-                            Choisissez la version principale des données
+                    {/* STEPPER CHỌN VERSION (Đã chuẩn hóa cuộn ngang mượt mà, không giật khung) */}
+                    <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '16px 20px', width: '100%', boxSizing: 'border-box' }}>
+                        <div style={{ fontSize: '13px', fontWeight: '700', color: '#1e293b', marginBottom: '14px' }}>
+                            Choisissez la version des données
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            width: '100%',
+                            overflowX: 'auto',
+                            paddingBottom: '4px',
+                            scrollbarWidth: 'thin'
+                        }}>
                             {filteredVersionList.map((ver, index) => {
                                 const isSelected = selectedVersion === ver;
                                 const isLast = index === filteredVersionList.length - 1;
@@ -238,7 +278,7 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
                                             style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}
                                         >
                                             <div style={{
-                                                width: '28px', height: '28px', borderRadius: '50%',
+                                                width: '26px', height: '26px', borderRadius: '50%',
                                                 backgroundColor: isSelected ? verColor : '#94a3b8',
                                                 color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center',
                                                 fontSize: '12px', fontWeight: '700', transition: 'all 0.2s ease',
@@ -250,7 +290,7 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
                                                 {ver}
                                             </span>
                                         </div>
-                                        {!isLast && <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0', margin: '0 12px', minWidth: '16px' }} />}
+                                        {!isLast && <div style={{ flexGrow: 1, minWidth: '24px', height: '1px', backgroundColor: '#e2e8f0', margin: '0 12px' }} />}
                                     </React.Fragment>
                                 );
                             })}
@@ -258,7 +298,7 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
                     </div>
                 </div>
 
-                {/* Báo lỗi hệ thống */}
+                {/* Các phần còn lại giữ nguyên... */}
                 {error && (
                     <div style={{ padding: '16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '16px', color: '#991b1b', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <AlertTriangle size={20} color="#dc2626" />
@@ -309,7 +349,7 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
                     </div>
                 </div>
 
-                {/* 3. HEATMAP CORRELATION MATRIX (ĐÃ TỐI ƯU RỘNG RÃI & KHUNG METHODE ĐẸP) */}
+                {/* 3. HEATMAP CORRELATION MATRIX */}
                 <div style={{ ...styles.card, position: 'relative', minHeight: '680px' }}>
                     {loading && (
                         <div style={styles.loadingOverlay}>
@@ -326,7 +366,6 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
                             </p>
                         </div>
 
-                        {/* KHUNG METHODE ĐƯỢC CHUẨN HÓA ĐẸP MẮT */}
                         <div style={styles.selectBox}>
                             <Sliders size={14} color="#94a3b8" />
                             <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Méthode :</span>
@@ -339,13 +378,18 @@ export default function MultiColumnProfiling({ initialTargetVar = 'visitor_count
                         </div>
                     </div>
 
-                    {/* VÙNG CHỨA HEATMAP MỞ RỘNG TOÀN DIỆN */}
                     <div style={{ width: '100%', height: '580px' }}>
                         {cols.length > 0 ? (
                             <Plot
                                 data={[{
                                     z: matrixValues, x: cols, y: cols, type: 'heatmap',
-                                    colorscale: [[0.0, '#2563eb'], [0.5, '#f8fafc'], [1.0, '#1d4ed8']],
+                                    colorscale: [
+                                        [0.0, '#1e3a8a'],  // Corrélation -1 (Xanh navy đậm)
+                                        [0.25, '#3b82f6'], // Corrélation -0.5 (Xanh dương chói)
+                                        [0.5, '#fef08a'],  // Corrélation 0 (Vàng chói / Trung tính)
+                                        [0.75, '#f97316'], // Corrélation +0.5 (Cam sặc sỡ)
+                                        [1.0, '#dc2626']   // Corrélation +1 (Đỏ đậm)
+                                    ],
                                     zmin: -1, zmax: 1,
                                     colorbar: {
                                         thickness: 14,

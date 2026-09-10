@@ -5,34 +5,37 @@ from pydantic import BaseModel, Field
 
 class TargetType(str, Enum):
     VISITOR = "visitor"
-    ENERGY = "energy"
+    ELEC = "elec"
+    THERMAL = "thermal"
 
 
 class TrainModelRequest(BaseModel):
     version_id: str = Field("v0_raw", description="ID version (tên bảng) trong schema data_prep")
     id_attraction: str = Field("ALL", description="ID Attraction ('H03', 'H07', 'ALL')")
-    target_column: str = Field("elec_01", description="Cột target dự báo (vd: visitor_count, elec_01, ec_01)")
-    target_type: TargetType = Field(
-        TargetType.ENERGY, 
-        description="Loại target: 'visitor' hoặc 'energy'"
-    )
-    model_type: str = Field(
-        "xgboost", 
-        description="Loại mô hình: 'xgboost', 'lightgbm', 'random_forest', 'ridge', 'lstm', 'gru'"
-    )
+    target_column: str = Field("elec_01", description="Cột target dự báo")
+    target_type: TargetType = Field(TargetType.ELEC, description="Loại target: 'visitor' hoặc 'energy'")
+    model_type: str = Field("xgboost", description="Loại mô hình: 'xgboost', 'lightgbm', 'random_forest', 'ridge', 'lstm', 'gru'")
     
-    # --- CẤU HÌNH PHÂN CHIA TRAIN/TEST ---
-    split_method: str = Field("ratio", description="Phương pháp chia tập dữ liệu: 'ratio' (tỷ lệ) hoặc 'date' (theo ngày)")
-    test_size: float = Field(0.2, description="Tỷ lệ tập test (dùng khi split_method='ratio')")
-    
-    start_date: Optional[str] = Field(None, description="Ngày bắt đầu lấy dữ liệu (YYYY-MM-DD)")
-    end_date: Optional[str] = Field(None, description="Ngày kết thúc lấy dữ liệu (YYYY-MM-DD)")
-    split_date: Optional[str] = Field(None, description="Mốc ngày chia Train/Test (Dữ liệu trước date là Train, sau date là Test)")
+    split_method: str = Field("ratio", description="Phương pháp chia: 'ratio' hoặc 'date'")
+    test_size: float = Field(0.2, description="Tỷ lệ test")
+    start_date: Optional[str] = Field(None)
+    end_date: Optional[str] = Field(None)
+    split_date: Optional[str] = Field(None)
 
-    hyperparameters: Optional[Dict[str, Any]] = Field(
-        default_factory=dict, 
-        description="Tham số tùy chỉnh cho mô hình"
-    )
+    hyperparameters: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class FeatureImportanceItem(BaseModel):
+    feature: str
+    importance: float
+
+
+class PerformanceComparison(BaseModel):
+    previous_model_id: Optional[str] = None
+    r2_diff: Optional[float] = None
+    rmse_diff: Optional[float] = None
+    mae_diff: Optional[float] = None
+    improvement_summary: str
 
 
 class TrainModelResponse(BaseModel):
@@ -45,8 +48,14 @@ class TrainModelResponse(BaseModel):
     target_column: str
     train_rows: int
     test_rows: int
-    metrics: Dict[str, float] = Field(..., description="Metrics: R2, RMSE, MAE, MAPE")
+    metrics: Dict[str, float]
     feature_names: List[str]
+    
+    # --- CÁC MỤC MỚI BỔ SUNG ---
+    shap_importance: List[FeatureImportanceItem] = Field(default_factory=list, description="Top biến quan trọng theo SHAP")
+    pfi_importance: List[FeatureImportanceItem] = Field(default_factory=list, description="Top biến quan trọng theo PFI")
+    performance_improvement: PerformanceComparison
+    ai_explanation: str = Field("", description="AI phân tích và giải thích tự động")
     created_at: str
 
 
@@ -61,5 +70,3 @@ class ModelRegistryItem(BaseModel):
     rmse: float
     mae: float
     created_at: Optional[str] = None
-    
-    

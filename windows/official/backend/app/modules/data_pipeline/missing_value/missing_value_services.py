@@ -65,21 +65,29 @@ class MissingValueService:
             conn.commit()
 
     @classmethod
-    def _load_metadata_store(cls) -> Dict[str, Any]:
-        """Tải toàn bộ Metadata từ PostgreSQL Registry."""
+    def _load_metadata_store(cls, step_type: Optional[str] = None) -> Dict[str, Any]:
+        """Tải Metadata từ PostgreSQL Registry, hỗ trợ lọc theo step_type."""
         cls._init_db_schema()
+
+        # Tạo câu điều kiện WHERE nếu có truyền step_type
+        where_clause = ""
+        params = {}
+        if step_type:
+            where_clause = " WHERE step_type = :step_type"
+            params["step_type"] = step_type
+
         query = text(
-            f"SELECT * FROM {SCHEMA_NAME}.data_version_registry ORDER BY created_at DESC"
+            f"SELECT * FROM {SCHEMA_NAME}.data_version_registry{where_clause} ORDER BY created_at DESC"
         )
 
         with engine.connect() as conn:
-            rows = conn.execute(query).mappings().all()
+            rows = conn.execute(query, params).mappings().all()
 
         metadata_store = {}
         for row in rows:
             v_id = row["version_id"]
             cols = row["target_columns"].split(", ") if row["target_columns"] else []
-            params = row["parameters"] if row["parameters"] else {}
+            params_dict = row["parameters"] if row["parameters"] else {}
 
             metadata_store[v_id] = {
                 "version_id": v_id,
@@ -88,9 +96,9 @@ class MissingValueService:
                 "step_type": row["step_type"],
                 "method": row["method"],
                 "method_label_fr": row["method_label_fr"],
-                "action": params.get("action"),
+                "action": params_dict.get("action"),
                 "target_columns": cols,
-                "parameters": params,
+                "parameters": params_dict,
                 "stats": row["stats"] if row["stats"] else {},
                 "file_path": row["file_path"],
                 "created_at": row["created_at"].isoformat()
@@ -162,14 +170,16 @@ class MissingValueService:
     def get_version_null_stats(
         cls, version_id: str, id_attraction: str = "ALL"
     ) -> Tuple[Dict[str, int], List[str]]:
-        df_full = cls.load_version_dataframe(version_id, id_attraction="ALL")
-
+        # Luôn lấy danh sách attractions đầy đủ từ phiên bản gốc v0_raw
+        df_raw = cls.load_version_dataframe("v0_raw", id_attraction="ALL")
         attractions = []
-        if "id_attraction" in df_full.columns:
+        if "id_attraction" in df_raw.columns:
             attractions = sorted(
-                [str(x) for x in df_full["id_attraction"].unique() if pd.notnull(x)]
+                [str(x) for x in df_raw["id_attraction"].unique() if pd.notnull(x)]
             )
 
+        # Đọc dữ liệu của phiên bản hiện tại để tính null_counts
+        df_full = cls.load_version_dataframe(version_id, id_attraction="ALL")
         df_target = df_full
         if (
             id_attraction
@@ -377,9 +387,15 @@ class MissingValueService:
         if "ouvert" in df_out.columns:
             if "type_frequentation" in df_out.columns and "heure" in df_out.columns:
                 mask_open_valid = df_out["is_open"] == 1
+                
+                # 🟢 KIỂM TRA VÀ THÊM id_attraction VÀO GROUPBY NẾU CÓ
+                group_cols = ["type_frequentation", "heure"]
+                if "id_attraction" in df_out.columns:
+                    group_cols = ["id_attraction"] + group_cols
+                    
                 profil_moyen = (
                     df_out[mask_open_valid]
-                    .groupby(["type_frequentation", "heure"])["ouvert"]
+                    .groupby(group_cols)["ouvert"]
                     .transform("mean")
                 )
                 df_out["ouvert"] = df_out["ouvert"].fillna(profil_moyen)

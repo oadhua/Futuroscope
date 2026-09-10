@@ -34,6 +34,8 @@ import FeatureSelection from './modules/data_pipeline/FeatureSelection/FeatureSe
 
 // Import ML Module
 import MLTrainingDashboard from './modules/ml_forecasting/Training/Training';
+import MLInference from './modules/ml_forecasting/MLInference/MLInference';
+import FutureForecast from './modules/ml_forecasting/FutureForecast/FutureForecast';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('pipeline');
@@ -65,18 +67,18 @@ export default function App() {
       icon: <BrainCircuit size={18} />,
       subTabs: [
         { id: 'training', label: '2.1 Model Training & Studio', icon: <PlaySquare size={16} /> },
-        { id: 'visitor', label: '2.2 Visitor Forecast', icon: <Activity size={16} /> },
-        { id: 'energy', label: '2.3 Energy Load Forecast', icon: <Zap size={16} /> },
+        { id: 'visitor', label: '2.2 Evaluation & Comparison', icon: <Activity size={16} /> },
+        { id: 'energy', label: '2.3 Prediction', icon: <Zap size={16} /> },
       ]
     },
-    hvac: {
-      title: 'HVAC Optimization',
-      icon: <Wind size={18} />,
-      subTabs: [
-        { id: 'control', label: '3.1 Thermal Model & Control', icon: <Sparkles size={16} /> },
-        { id: 'settings', label: '3.2 Optimization Rules', icon: <Settings size={16} /> },
-      ]
-    }
+    // hvac: {
+    //   title: 'HVAC Optimization',
+    //   icon: <Wind size={18} />,
+    //   subTabs: [
+    //     { id: 'control', label: '3.1 Thermal Model & Control', icon: <Sparkles size={16} /> },
+    //     { id: 'settings', label: '3.2 Optimization Rules', icon: <Settings size={16} /> },
+    //   ]
+    // }
   };
 
   const handleMainTabChange = (tabKey) => {
@@ -104,14 +106,14 @@ export default function App() {
 
     if (activeTab === 'ml') {
       if (activeSubTab === 'training') return <MLTrainingDashboard />;
-      if (activeSubTab === 'visitor') return <PlaceholderContent title="Visitor Attendance Forecasting Model" />;
-      if (activeSubTab === 'energy') return <PlaceholderContent title="Building Energy Consumption Forecasting" />;
+      if (activeSubTab === 'visitor') return <MLInference />;
+      if (activeSubTab === 'energy') return <FutureForecast />;
     }
 
-    if (activeTab === 'hvac') {
-      if (activeSubTab === 'control') return <PlaceholderContent title="HVAC Smart Control & Simulation" />;
-      if (activeSubTab === 'settings') return <PlaceholderContent title="HVAC Energy Savings Rules & Constraints" />;
-    }
+    // if (activeTab === 'hvac') {
+    //   if (activeSubTab === 'control') return <PlaceholderContent title="HVAC Smart Control & Simulation" />;
+    //   if (activeSubTab === 'settings') return <PlaceholderContent title="HVAC Energy Savings Rules & Constraints" />;
+    // }
 
     return null;
   };

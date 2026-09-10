@@ -244,15 +244,17 @@ export default function SingleColumn({ initialColumn = 'visitor_count' }) {
         return traces;
     }, [multiVersionTimeSeries, filteredVersionList, selectedVersion, timeGranularity, timeXAxisKey, startDate, endDate]);
 
-    // --- Styles đồng bộ theo component DataAnalysis ---
+    // --- Styles đã căn chỉnh tối ưu chống vỡ giao diện ---
     const styles = {
         wrapper: { minHeight: '100vh', backgroundColor: '#f8fafc', padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1e293b' },
         container: { maxWidth: '1280px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' },
         card: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)', boxSizing: 'border-box' },
         headerCard: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' },
-        topBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' },
-        selectBox: { display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '8px 14px', borderRadius: '16px', fontSize: '12px', minWidth: '180px' },
-        select: { border: 'none', background: 'transparent', fontWeight: 'bold', color: '#0f172a', outline: 'none', cursor: 'pointer', appearance: 'none', width: '100%', lineHeight: '1' },
+        topBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'nowrap' },
+        titleSection: { display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0, flexShrink: 1 },
+        filterGroup: { display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 },
+        selectBox: { display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '8px 12px', borderRadius: '16px', fontSize: '12px', width: '220px', flexShrink: 0, boxSizing: 'border-box' },
+        select: { border: 'none', background: 'transparent', fontWeight: 'bold', color: '#0f172a', outline: 'none', cursor: 'pointer', appearance: 'none', width: '100%', lineHeight: '1', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' },
         kpiGrid: { backgroundColor: '#ffffff', borderRadius: '24px', border: '1px solid #e2e8f0', padding: '12px 16px', display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' },
         kpiItem: { display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 4px', minWidth: 0 },
         iconBg: (bg, color) => ({ backgroundColor: bg, color: color, padding: '10px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }),
@@ -280,54 +282,58 @@ export default function SingleColumn({ initialColumn = 'visitor_count' }) {
                 {/* EN-TÊTE & FILTRES */}
                 <div style={styles.headerCard}>
                     <div style={styles.topBar}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div style={styles.titleSection}>
                             <div style={styles.iconBg('#eff6ff', '#2563eb')}>
                                 <BarChart3 size={24} />
                             </div>
-                            <div>
-                                <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', lineHeight: '1.2' }}>
+                            <div style={{ minWidth: 0 }}>
+                                <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0f172a', lineHeight: '1.2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                     Profilage Détaillé par Variable
                                 </h1>
-                                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94a3b8', fontWeight: '600', lineHeight: '1.2' }}>
+                                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#94a3b8', fontWeight: '600', lineHeight: '1.2', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                     Variable : <span style={{ color: '#2563eb' }}>{data?.nom_colonne || selectedColumn}</span> | Version : <span style={{ color: '#059669' }}>{selectedVersion}</span>
                                 </p>
                             </div>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                        <div style={styles.filterGroup}>
                             {/* Filtre Attraction */}
                             <div style={styles.selectBox}>
-                                <Filter size={14} color="#94a3b8" />
-                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Attraction :</span>
-                                <select value={selectedAttraction} onChange={(e) => handleAttractionChange(e.target.value)} style={styles.select}>
-                                    <option value="ALL">Toutes les attractions</option>
-                                    {attractionList.map(id => <option key={id} value={id}>Attraction {id}</option>)}
-                                </select>
-                                <ChevronDown size={14} color="#94a3b8" />
+                                <Filter size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
+                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Attraction :</span>
+                                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
+                                    <select value={selectedAttraction} onChange={(e) => handleAttractionChange(e.target.value)} style={styles.select}>
+                                        <option value="ALL">Toutes les attractions</option>
+                                        {attractionList.map(id => <option key={id} value={id}>Attraction {id}</option>)}
+                                    </select>
+                                </div>
+                                <ChevronDown size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
                             </div>
 
                             {/* Filtre Colonne */}
                             <div style={styles.selectBox}>
-                                <Sliders size={14} color="#94a3b8" />
-                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap' }}>Colonne :</span>
-                                <select value={selectedColumn} onChange={(e) => setSelectedColumn(e.target.value)} style={styles.select}>
-                                    {availableColumns.length > 0 ? (
-                                        availableColumns.map(col => <option key={col} value={col}>{col}</option>)
-                                    ) : (
-                                        <option value={selectedColumn}>{selectedColumn}</option>
-                                    )}
-                                </select>
-                                <ChevronDown size={14} color="#94a3b8" />
+                                <Sliders size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
+                                <span style={{ color: '#64748b', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Colonne :</span>
+                                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
+                                    <select value={selectedColumn} onChange={(e) => setSelectedColumn(e.target.value)} style={styles.select}>
+                                        {availableColumns.length > 0 ? (
+                                            availableColumns.map(col => <option key={col} value={col}>{col}</option>)
+                                        ) : (
+                                            <option value={selectedColumn}>{selectedColumn}</option>
+                                        )}
+                                    </select>
+                                </div>
+                                <ChevronDown size={14} color="#94a3b8" style={{ flexShrink: 0 }} />
                             </div>
                         </div>
                     </div>
 
                     {/* STEPPER CHỌN VERSION CHUẨN ĐẸP */}
-                    <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '20px 24px', width: '100%', boxSizing: 'border-box' }}>
-                        <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b', marginBottom: '20px' }}>
-                            Choisissez la version principale des données
+                    <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '16px 20px', width: '100%', boxSizing: 'border-box' }}>
+                        <div style={{ fontSize: '13px', fontWeight: '700', color: '#1e293b', marginBottom: '14px' }}>
+                            Choisissez la version des données
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', overflowX: 'auto', paddingBottom: '4px' }}>
                             {filteredVersionList.map((ver, index) => {
                                 const isSelected = selectedVersion === ver;
                                 const isLast = index === filteredVersionList.length - 1;
@@ -340,15 +346,15 @@ export default function SingleColumn({ initialColumn = 'visitor_count' }) {
                                             style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', userSelect: 'none', flexShrink: 0 }}
                                         >
                                             <div style={{
-                                                width: '28px', height: '28px', borderRadius: '50%',
+                                                width: '26px', height: '26px', borderRadius: '50%',
                                                 backgroundColor: isSelected ? verColor : '#94a3b8',
                                                 color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                fontSize: '12px', fontWeight: '700', transition: 'all 0.2s ease',
+                                                fontSize: '11px', fontWeight: '700', transition: 'all 0.2s ease',
                                                 boxShadow: isSelected ? `0 0 0 4px ${verColor}25` : 'none', flexShrink: 0
                                             }}>
                                                 {index + 1}
                                             </div>
-                                            <span style={{ fontSize: '13px', fontWeight: isSelected ? '700' : '500', color: isSelected ? '#1e293b' : '#64748b', whiteSpace: 'nowrap' }}>
+                                            <span style={{ fontSize: '12px', fontWeight: isSelected ? '700' : '500', color: isSelected ? '#1e293b' : '#64748b', whiteSpace: 'nowrap' }}>
                                                 {ver}
                                             </span>
                                         </div>

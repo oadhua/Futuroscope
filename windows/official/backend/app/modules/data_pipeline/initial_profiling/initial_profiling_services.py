@@ -17,56 +17,94 @@ from app.modules.data_pipeline.initial_profiling.initial_profiling_schemas impor
 
 class InitialProfilingService:
     @staticmethod
-    def get_data_prep_versions(db: Session, id_attraction: Optional[str] = None) -> List[str]:
+    def get_data_prep_versions(
+        db: Session, id_attraction: Optional[str] = None
+    ) -> List[Dict]:
         """
-        Lấy các bảng thực tế trong schema 'data_prep', bỏ qua các bảng hệ thống
-        như 'data_version_registry'.
+        Lấy danh sách các bảng trong schema 'data_prep' kèm theo thời gian chỉnh sửa an toàn.
+        Nếu gặp lỗi bảng hỏng, tự động rollback transaction và chuyển sang fallback schema.
         """
-        db.commit()
-        connection = db.connection()
-        inspector = inspect(connection)
+        # 1. Truy vấn bằng information_schema kết hợp pg_stat_file an toàn
+        query = text("""
+            SELECT 
+                t.table_name,
+                (pg_stat_file(pg_relation_filepath(quote_ident(t.table_schema) || '.' || quote_ident(t.table_name)))).modification AS created_at
+            FROM information_schema.tables t
+            WHERE t.table_schema = 'data_prep' 
+              AND t.table_type = 'BASE TABLE'
+              AND t.table_name NOT IN ('data_version_registry', 'ml_model_registry')
+            ORDER BY created_at ASC;
+        """)
 
         try:
-            tables = inspector.get_table_names(schema="data_prep")
-        except Exception:
-            tables = []
-
-        if not tables:
-            query = text("""
-                SELECT c.relname 
-                FROM pg_class c
-                JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'data_prep' 
-                  AND c.relkind = 'r'
-                ORDER BY c.relname ASC;
-            """)
             result = db.execute(query).fetchall()
-            tables = [row[0] for row in result]
+            versions_data = [
+                {
+                    "version_id": row[0],
+                    "created_at": row[1].isoformat() if row[1] else None,
+                }
+                for row in result
+            ]
+        except Exception as e:
+            # 🛑 QUAN TRỌNG: Rollback transaction bị hỏng để giải phóng Session trước khi query fallback
+            db.rollback()
+            print(f"[WARNING] Không thể lấy created_at bằng pg_stat_file: {str(e)}")
 
-        # 1. LỌC BỎ bảng registry khỏi danh sách chọn
-        EXCLUDED_TABLES = {"data_version_registry"}
-        tables = [t for t in tables if t.lower() not in EXCLUDED_TABLES]
+            # Truy vấn an toàn từ information_schema không chạm vào ổ đĩa
+            fallback_query = text("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'data_prep' 
+                  AND table_type = 'BASE TABLE'
+                  AND table_name NOT IN ('data_version_registry', 'ml_model_registry')
+                ORDER BY table_name ASC;
+            """)
+            result = db.execute(fallback_query).fetchall()
+            versions_data = [
+                {"version_id": row[0], "created_at": None} for row in result
+            ]
 
-        tables = sorted(tables)
-        if "v0_raw" not in tables:
-            tables.insert(0, "v0_raw")
+        # 2. Đảm bảo luôn có v0_raw ở đầu danh sách
+        has_v0 = any(v["version_id"] == "v0_raw" for v in versions_data)
+        if not has_v0:
+            versions_data.insert(
+                0, {"version_id": "v0_raw", "created_at": "1970-01-01T00:00:00"}
+            )
 
-        # 2. Lọc theo id_attraction (nếu có chọn attraction cụ thể)
+        # 3. Lọc theo id_attraction (nếu có chọn attraction)
         if id_attraction and id_attraction.upper() != "ALL":
             attr_upper = id_attraction.upper()
-            tables = [v for v in tables if v == "v0_raw" or attr_upper in v.upper()]
+            versions_data = [
+                v
+                for v in versions_data
+                if v["version_id"].lower().startswith("v")
+                or attr_upper in v["version_id"].upper()
+            ]
 
-        return tables
+        return versions_data
 
     @classmethod
-    def get_available_versions(cls, db: Session, id_attraction: Optional[str] = None) -> List[DataVersionOption]:
-        """Trả về danh sách DataVersionOption chỉ chứa các bảng dữ liệu thực tế."""
-        versions = cls.get_data_prep_versions(db, id_attraction)
+    def get_available_versions(
+        cls, db: Session, id_attraction: Optional[str] = None
+    ) -> List[DataVersionOption]:
+        """Trả về danh sách DataVersionOption chứa thông tin version_id và created_at."""
+        versions_data = cls.get_data_prep_versions(db, id_attraction)
         options = []
-        for v in versions:
-            label = "Version 0 (Brute)" if v == "v0_raw" else f"Version ({v})"
-            is_up = v != "v0_raw"
-            options.append(DataVersionOption(version_id=v, version_label=label, is_updated=is_up))
+        for item in versions_data:
+            v_id = item["version_id"]
+            created_at = item["created_at"]
+            label = "Version 0 (Brute)" if v_id == "v0_raw" else f"Version ({v_id})"
+            is_up = v_id != "v0_raw"
+
+            # Đảm bảo DataVersionOption schema của bạn có nhận tham số created_at
+            options.append(
+                DataVersionOption(
+                    version_id=v_id,
+                    version_label=label,
+                    is_updated=is_up,
+                    created_at=created_at,
+                )
+            )
         return options
 
     @staticmethod

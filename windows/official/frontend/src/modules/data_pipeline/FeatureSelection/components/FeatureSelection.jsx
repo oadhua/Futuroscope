@@ -62,7 +62,7 @@ export default function FeatureSelectionModule() {
         return Array.from(attrs).sort();
     }, [versions]);
 
-    // 2. Filtrer les versions par attraction
+    // 2. Filtrer les versions par attraction (Danh sách đầy đủ cho dropdown đầu vào)
     const availableVersions = useMemo(() => {
         return Object.values(versions)
             .filter(v => {
@@ -75,6 +75,17 @@ export default function FeatureSelectionModule() {
                 return String(a.version_id).localeCompare(String(b.version_id), undefined, { numeric: true, sensitivity: 'base' });
             });
     }, [versions, selectedAttraction]);
+
+    // 2b. CHỈ LỌC CÁC PHIÊN BẢN ĐƯỢC TẠO TỪ FEATURE SELECTION (Dùng cho Mục 4)
+    const fsOnlyVersions = useMemo(() => {
+        return availableVersions.filter(v => {
+            const vId = String(v.version_id || '');
+            // Kiểm tra theo ID có chuỗi '_fs_' hoặc các trường đặc trưng của Feature Selection
+            return (
+                vId.includes('_fs_')
+            );
+        });
+    }, [availableVersions]);
 
     useEffect(() => {
         if (availableVersions.length > 0) {
@@ -613,17 +624,17 @@ export default function FeatureSelectionModule() {
                 <div style={styles.card}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                         <h2 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: '#0f172a' }}>
-                            📂 Versions Disponibles
+                            📂 Versions Disponibles ({fsOnlyVersions.length})
                         </h2>
                     </div>
 
-                    {availableVersions.length === 0 ? (
+                    {fsOnlyVersions.length === 0 ? (
                         <p style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '13px', margin: 0 }}>
-                            Aucune version enregistrée.
+                            Aucune version issue de Feature Selection disponible.
                         </p>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
-                            {availableVersions.map((v) => {
+                            {fsOnlyVersions.map((v) => {
                                 const isSelected = selectedVersionId === v.version_id;
                                 return (
                                     <div key={v.version_id} onClick={() => setSelectedVersionId(v.version_id)} style={styles.versionItem(isSelected)}>
@@ -633,7 +644,7 @@ export default function FeatureSelectionModule() {
                                                     {v.version_id}
                                                 </span>
                                                 <span style={{ backgroundColor: '#f1f5f9', color: '#475569', fontSize: '11px', padding: '3px 8px', borderRadius: '6px', fontWeight: '600' }}>
-                                                    {v.method_label_fr || v.method || 'Standard'}
+                                                    {v.method_label_fr || v.method || 'Feature Selection'}
                                                 </span>
                                             </div>
                                         </div>

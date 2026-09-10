@@ -29,3 +29,4 @@ class DataVersionOption(BaseModel):
     version_id: str
     version_label: str
     is_updated: bool = False
+    created_at: Optional[str] = None

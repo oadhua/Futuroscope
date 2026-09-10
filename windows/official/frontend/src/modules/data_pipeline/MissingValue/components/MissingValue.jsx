@@ -4,6 +4,8 @@ import {
     Play, Trash2, AlertTriangle, CheckCircle2, X
 } from 'lucide-react';
 
+const STEP_TYPE = 'missing_value_imputation';
+
 const STAT_METHODS = [
     { value: 'mean', label: 'Moyenne (Mean)' },
     { value: 'median', label: 'Médiane (Median)' },
@@ -17,9 +19,12 @@ const STAT_METHODS = [
 ];
 
 export default function MissingValueModule() {
-    const [versions, setVersions] = useState({});
-    const [selectedParent, setSelectedParent] = useState('v0_raw');
+    // 1. Lưu TẤT CẢ versions từ Backend
+    const [allVersions, setAllVersions] = useState({});
+
+    // 🎯 Thứ tự ưu tiên: Đặt selectedAttraction lên trước selectedParent
     const [selectedAttraction, setSelectedAttraction] = useState('ALL');
+    const [selectedParent, setSelectedParent] = useState('v0_raw');
     const [availableAttractions, setAvailableAttractions] = useState([]);
 
     const [availableColumns, setAvailableColumns] = useState([]);
@@ -40,12 +45,13 @@ export default function MissingValueModule() {
 
     const API_BASE = 'http://localhost:8000/data-prep';
 
+    // Fetch TẤT CẢ các version có trong hệ thống
     const fetchVersions = async () => {
         try {
             const res = await fetch(`${API_BASE}/versions`);
             if (res.ok) {
                 const data = await res.json();
-                setVersions(data);
+                setAllVersions(data || {});
             }
         } catch (err) {
             console.error('Erreur lors du chargement des versions :', err);
@@ -56,17 +62,30 @@ export default function MissingValueModule() {
         fetchVersions();
     }, []);
 
-    // 1. Tự động đồng bộ Scope Attraction khi đổi Version Parent
-    useEffect(() => {
-        if (selectedParent && selectedParent !== 'v0_raw' && versions[selectedParent]) {
-            const parentAttr = versions[selectedParent].id_attraction;
-            if (parentAttr) {
-                setSelectedAttraction(parentAttr);
-            }
-        }
-    }, [selectedParent, versions]);
+    // 2. Lọc danh sách hiển thị ở CỘT BÊN PHẢI (Chỉ giữ lại các version do module này tạo ra)
+    const moduleVersions = useMemo(() => {
+        return Object.values(allVersions).filter(v => {
+            const matchStep = v.step_type === STEP_TYPE;
+            if (selectedAttraction === 'ALL') return matchStep;
+            const attrVal = v.id_attraction || v.attraction_id;
+            return matchStep && String(attrVal) === String(selectedAttraction);
+        });
+    }, [allVersions, selectedAttraction]);
 
-    // 2. Fetch stats dựa trên selectedParent và selectedAttraction (không reset bậy)
+    // 3. Lọc danh sách PARENT VERSIONS dựa trên selectedAttraction hiện tại
+    const parentVersionsList = useMemo(() => {
+        return Object.entries(allVersions).filter(([vId, vObj]) => {
+            if (vId === 'v0_raw') return true;
+            if (selectedAttraction === 'ALL') return true;
+
+            const attrVal = vObj?.id_attraction || vObj?.attraction_id;
+            return !attrVal || attrVal === 'ALL' || String(attrVal) === String(selectedAttraction);
+        });
+    }, [allVersions, selectedAttraction]);
+
+    // ❌ ĐÃ XÓA useEffect tự động thay đổi selectedAttraction theo selectedParent theo yêu cầu của bạn.
+
+    // 4. Fetch thông số thống kê dựa trên selectedParent và selectedAttraction
     useEffect(() => {
         const fetchParentStats = async () => {
             try {
@@ -76,8 +95,7 @@ export default function MissingValueModule() {
                     const nullCounts = data.null_counts || {};
                     setColumnsNullInfo(nullCounts);
 
-                    // Chỉ cập nhật danh sách khả thi nếu backend thực sự trả về mảng hợp lệ
-                    if (Array.isArray(data.available_attractions) && data.available_attractions.length > 0) {
+                    if (selectedAttraction === 'ALL' && Array.isArray(data.available_attractions) && data.available_attractions.length > 0) {
                         setAvailableAttractions(data.available_attractions);
                     }
 
@@ -96,14 +114,6 @@ export default function MissingValueModule() {
             fetchParentStats();
         }
     }, [selectedParent, selectedAttraction]);
-
-    // Lọc danh sách phiên bản hiển thị theo id_attraction đang chọn
-    const filteredVersions = useMemo(() => {
-        return Object.values(versions).filter(v => {
-            if (selectedAttraction === 'ALL') return true;
-            return String(v.id_attraction) === String(selectedAttraction);
-        });
-    }, [versions, selectedAttraction]);
 
     const handleToggleColumn = (col) => {
         if (selectedColumns.includes(col)) {
@@ -264,23 +274,9 @@ export default function MissingValueModule() {
                             ⚙️ Configuration du Traitement
                         </h2>
 
-                        {/* 1. Parent Version */}
+                        {/* 🎯 BƯỚC 1: Scope Attraction (Chuyển lên đầu) */}
                         <div style={styles.formGroup}>
-                            <label style={styles.label}>1. Version Source (Parent)</label>
-                            <div style={styles.selectBox}>
-                                <Layers size={14} color="#94a3b8" />
-                                <select value={selectedParent} onChange={(e) => setSelectedParent(e.target.value)} style={styles.select}>
-                                    <option value="v0_raw">v0_raw (Données brutes)</option>
-                                    {Object.keys(versions).map((vId) => (
-                                        <option key={vId} value={vId}>{vId}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-
-                        {/* 2. Scope Attraction */}
-                        <div style={styles.formGroup}>
-                            <label style={styles.label}>2. Scope Attraction (id_attraction)</label>
+                            <label style={styles.label}>1. Scope Attraction (id_attraction)</label>
                             <div style={{ ...styles.selectBox, backgroundColor: '#f0f9ff', borderColor: '#bae6fd' }}>
                                 <Filter size={14} color="#0284c7" />
                                 <select value={selectedAttraction} onChange={(e) => setSelectedAttraction(e.target.value)} style={{ ...styles.select, color: '#0369a1' }}>
@@ -288,6 +284,29 @@ export default function MissingValueModule() {
                                     {availableAttractions.map((attr) => (
                                         <option key={attr} value={attr}>🎢 Attraction ID: {attr}</option>
                                     ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        {/* 🎯 BƯỚC 2: Parent Version Source (Chuyển xuống dưới) */}
+                        <div style={styles.formGroup}>
+                            <label style={styles.label}>2. Version Source (Parent)</label>
+                            <div style={styles.selectBox}>
+                                <Layers size={14} color="#94a3b8" />
+                                <select
+                                    value={selectedParent}
+                                    onChange={(e) => setSelectedParent(e.target.value)}
+                                    style={styles.select}
+                                >
+                                    <option value="v0_raw">v0_raw</option>
+                                    {parentVersionsList.map(([vId, vObj]) => {
+                                        if (vId === 'v0_raw') return null;
+                                        return (
+                                            <option key={vId} value={vId}>
+                                                {vId} {vObj?.step_type ? `(${vObj.step_type})` : ''}
+                                            </option>
+                                        );
+                                    })}
                                 </select>
                             </div>
                         </div>
@@ -402,10 +421,10 @@ export default function MissingValueModule() {
                         )}
                     </div>
 
-                    {/* PANEL PHAI: KET QUA & DANH SACH VERSION */}
+                    {/* PANEL PHẢI: KẾT QUẢ & DANH SÁCH VERSION */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', minWidth: 0 }}>
 
-                        {/* CHI TIET VERSION DUOC CHON */}
+                        {/* CHI TIẾT VERSION ĐƯỢC CHỌN */}
                         {selectedVersion ? (
                             <div style={styles.resultCard}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
@@ -465,7 +484,7 @@ export default function MissingValueModule() {
                             </div>
                         )}
 
-                        {/* DANH SACH VERSION DA LOC THEO ATTRACTION */}
+                        {/* DANH SÁCH VERSION CỦA MODULE MISSING VALUE */}
                         <div style={styles.card}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px' }}>
                                 <h2 style={{ margin: 0, fontSize: '15px', fontWeight: '700', color: '#0f172a' }}>
@@ -476,13 +495,13 @@ export default function MissingValueModule() {
                                 </span>
                             </div>
 
-                            {filteredVersions.length === 0 ? (
+                            {moduleVersions.length === 0 ? (
                                 <p style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '13px', margin: 0 }}>
                                     Aucune version enregistrée pour {selectedAttraction === 'ALL' ? 'tous les sites' : `l'attraction ${selectedAttraction}`}.
                                 </p>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    {filteredVersions.map((v) => {
+                                    {moduleVersions.map((v) => {
                                         const isSelected = selectedVersion && selectedVersion.version_id === v.version_id;
                                         return (
                                             <div key={v.version_id} onClick={() => setSelectedVersion(v)} style={styles.versionItem(isSelected)}>
@@ -494,9 +513,9 @@ export default function MissingValueModule() {
                                                         <span style={{ backgroundColor: '#f1f5f9', color: '#475569', fontSize: '11px', padding: '2px 6px', borderRadius: '6px', fontWeight: '600' }}>
                                                             {v.method_label_fr}
                                                         </span>
-                                                        {v.id_attraction && (
+                                                        {(v.id_attraction || v.attraction_id) && (
                                                             <span style={{ backgroundColor: '#e0f2fe', color: '#0369a1', fontSize: '10px', padding: '2px 6px', borderRadius: '6px', fontWeight: '700' }}>
-                                                                {v.id_attraction}
+                                                                {v.id_attraction || v.attraction_id}
                                                             </span>
                                                         )}
                                                     </div>

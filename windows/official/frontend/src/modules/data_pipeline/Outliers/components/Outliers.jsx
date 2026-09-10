@@ -1,26 +1,33 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
     Sliders, Filter, Layers, CheckSquare, Square,
-    Play, Trash2, AlertTriangle, CheckCircle2, X, ShieldAlert, RefreshCw
+    Play, Trash2, AlertTriangle, CheckCircle2, X,
+    ShieldAlert, RefreshCw, Search, Sparkles, BarChart2
 } from 'lucide-react';
 
+const STEP_TYPE = 'outlier_treatment';
+
 const OUTLIER_METHODS = [
-    { value: 'iqr', label: 'IQR - Écart Interquartile' },
-    { value: 'z_score', label: 'Z-Score (Écart-type)' },
-    { value: 'isolation_forest', label: 'Isolation Forest (Forêt d\'isolement)' },
-    { value: 'lof', label: 'LOF - Local Outlier Factor' },
+    { value: 'iqr', label: 'IQR - Écart Interquartile', desc: 'Détection basée sur les quartiles (Q1, Q3)' },
+    { value: 'z_score', label: 'Z-Score (Écart-type)', desc: 'Détection basée sur l\'écart à la moyenne' },
+    { value: 'isolation_forest', label: 'Isolation Forest', desc: 'Algorithme ML pour anomalies complexes' },
+    { value: 'lof', label: 'LOF - Local Outlier Factor', desc: 'Densité locale par rapport aux voisins' },
 ];
 
 export default function OutliersModule() {
-    const [versions, setVersions] = useState({});
-    const [selectedParent, setSelectedParent] = useState('v0_raw');
+    // 1. Quản lý danh sách Scope & Versions
     const [selectedAttraction, setSelectedAttraction] = useState('ALL');
+    const [selectedParent, setSelectedParent] = useState('v0_raw');
+    const [allVersions, setAllVersions] = useState({});
     const [availableAttractions, setAvailableAttractions] = useState([]);
 
+    // 2. Quản lý danh sách Cột & Thống kê Outliers
     const [availableColumns, setAvailableColumns] = useState([]);
     const [columnsOutliersInfo, setColumnsOutliersInfo] = useState({});
+    const [columnSearch, setColumnSearch] = useState('');
 
-    const [treatmentMode, setTreatmentMode] = useState('by_column');
+    // 3. Cấu hình xử lý Outliers
+    const [treatmentMode, setTreatmentMode] = useState('by_column'); // 'by_column' | 'domain_rules'
     const [selectedColumns, setSelectedColumns] = useState([]);
     const [selectedMethod, setSelectedMethod] = useState('iqr');
     const [selectedAction, setSelectedAction] = useState('cap');
@@ -31,19 +38,21 @@ export default function OutliersModule() {
     const [iqrFactor, setIqrFactor] = useState(1.5);
     const [contamination, setContamination] = useState(0.05);
 
+    // Status & Output States
     const [loading, setLoading] = useState(false);
+    const [fetchingStats, setFetchingStats] = useState(false);
     const [errorMsg, setErrorMsg] = useState(null);
     const [selectedVersion, setSelectedVersion] = useState(null);
 
-    const API_BASE = 'http://localhost:8000';
+    const API_BASE = 'http://localhost:8000/data-prep';
 
-    // 1. Fetch liste des versions
+    // Fetch TẤT CẢ các versions từ backend
     const fetchVersions = async () => {
         try {
-            const res = await fetch(`${API_BASE}/data-prep/versions`);
+            const res = await fetch(`${API_BASE}/versions`);
             if (res.ok) {
                 const data = await res.json();
-                setVersions(data || {});
+                setAllVersions(data || {});
             }
         } catch (err) {
             console.error('Erreur lors du chargement des versions:', err);
@@ -54,28 +63,31 @@ export default function OutliersModule() {
         fetchVersions();
     }, []);
 
-    // 2. Synchronisation de id_attraction
-    useEffect(() => {
-        if (selectedParent && selectedParent !== 'v0_raw' && versions[selectedParent]) {
-            const parentObj = versions[selectedParent];
-            const parentAttr = parentObj.id_attraction || parentObj.attraction_id;
-            if (parentAttr) {
-                setSelectedAttraction(String(parentAttr));
-                return;
-            }
-        }
+    // Lọc danh sách Version hiển thị ở CỘT BÊN PHẢI (Chỉ hiển thị các version thuộc Outliers)
+    const moduleVersions = useMemo(() => {
+        return Object.values(allVersions).filter(v => {
+            const matchStep = v.step_type === STEP_TYPE || v.step_type === 'outlier_detection' || v.step_type === 'outliers';
+            if (selectedAttraction === 'ALL') return matchStep;
+            const attrVal = v.id_attraction || v.attraction_id;
+            return matchStep && String(attrVal) === String(selectedAttraction);
+        });
+    }, [allVersions, selectedAttraction]);
 
-        const match = selectedParent.match(/_(H\d+)$/i);
-        if (match) {
-            setSelectedAttraction(match[1].toUpperCase());
-        } else {
-            setSelectedAttraction('ALL');
-        }
-    }, [selectedParent, versions]);
+    // Lọc danh sách Parent Version cho Dropdown
+    const parentVersionsList = useMemo(() => {
+        return Object.entries(allVersions).filter(([vId, vObj]) => {
+            if (vId === 'v0_raw') return true;
+            if (selectedAttraction === 'ALL') return true;
 
-    // 3. Fetch Statistiques des Outliers
+            const attrVal = vObj?.id_attraction || vObj?.attraction_id;
+            return !attrVal || attrVal === 'ALL' || String(attrVal) === String(selectedAttraction);
+        });
+    }, [allVersions, selectedAttraction]);
+
+    // Fetch Statistiques des Outliers từ Parent Version
     useEffect(() => {
         const fetchParentStats = async () => {
+            setFetchingStats(true);
             try {
                 const queryParams = new URLSearchParams({
                     id_attraction: selectedAttraction,
@@ -84,12 +96,11 @@ export default function OutliersModule() {
                     z_threshold: zThreshold
                 });
 
-                const url = `${API_BASE}/data-prep/outliers/versions/${selectedParent}/stats?${queryParams.toString()}`;
+                const url = `${API_BASE}/outliers/versions/${selectedParent}/stats?${queryParams.toString()}`;
                 const res = await fetch(url);
 
                 if (res.ok) {
                     const data = await res.json();
-
                     const rawCounts = data.outlier_counts || data.stats?.outliers_detected || {};
                     let normalizedCounts = {};
 
@@ -107,22 +118,24 @@ export default function OutliersModule() {
 
                     setColumnsOutliersInfo(normalizedCounts);
 
+                    // Cập nhật danh sách attractions khả dụng khi đang chọn ALL
                     const attrs = data.available_attractions || [];
-                    if (Array.isArray(attrs) && attrs.length > 0) {
+                    if (selectedAttraction === 'ALL' && Array.isArray(attrs) && attrs.length > 0) {
                         setAvailableAttractions(attrs);
                     }
 
                     const cols = Object.keys(normalizedCounts);
                     setAvailableColumns(cols);
 
+                    // Mặc định chọn tất cả các cột nếu chưa chọn
                     if (cols.length > 0) {
                         setSelectedColumns(prev => prev.length === 0 ? cols : prev);
                     }
-                } else {
-                    console.warn('Impossible de récupérer les statistiques des outliers depuis l\'API');
                 }
             } catch (err) {
                 console.error('Erreur lors du chargement des statistiques:', err);
+            } finally {
+                setFetchingStats(false);
             }
         };
 
@@ -131,15 +144,14 @@ export default function OutliersModule() {
         }
     }, [selectedParent, selectedAttraction, selectedMethod, iqrFactor, zThreshold]);
 
-    const filteredVersions = useMemo(() => {
-        return Object.values(versions).filter(v => {
-            if (selectedAttraction === 'ALL') return true;
-            const attrVal = v.id_attraction || v.attraction_id;
-            if (!attrVal) return true;
-            return String(attrVal) === String(selectedAttraction);
-        });
-    }, [versions, selectedAttraction]);
+    // Filtered Columns cho thanh tìm kiếm cột
+    const filteredColumns = useMemo(() => {
+        return availableColumns.filter(col =>
+            col.toLowerCase().includes(columnSearch.toLowerCase())
+        );
+    }, [availableColumns, columnSearch]);
 
+    // Handlers chọn cột
     const handleToggleColumn = (col) => {
         setSelectedColumns(prev =>
             prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
@@ -148,7 +160,12 @@ export default function OutliersModule() {
 
     const handleSelectAllColumns = () => setSelectedColumns([...availableColumns]);
     const handleDeselectAllColumns = () => setSelectedColumns([]);
+    const handleSelectOutlierColumnsOnly = () => {
+        const outlierCols = availableColumns.filter(col => (columnsOutliersInfo[col] || 0) > 0);
+        setSelectedColumns(outlierCols);
+    };
 
+    // Thực thi xử lý Outliers
     const handleExecute = async () => {
         if (treatmentMode === 'by_column' && selectedColumns.length === 0) {
             setErrorMsg('Veuillez sélectionner au moins une colonne à traiter.');
@@ -181,7 +198,7 @@ export default function OutliersModule() {
         };
 
         try {
-            const res = await fetch(`${API_BASE}/data-prep/outliers`, {
+            const res = await fetch(`${API_BASE}/outliers`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -202,12 +219,13 @@ export default function OutliersModule() {
         }
     };
 
+    // Xóa Version
     const handleDeleteVersion = async (e, versionId) => {
         e.stopPropagation();
         if (!window.confirm(`Êtes-vous sûr de vouloir supprimer la version ${versionId} ?`)) return;
 
         try {
-            const res = await fetch(`${API_BASE}/data-prep/versions/${versionId}`, { method: 'DELETE' });
+            const res = await fetch(`${API_BASE}/versions/${versionId}`, { method: 'DELETE' });
             if (!res.ok) {
                 const errorData = await res.json();
                 throw new Error(errorData.detail || 'Impossible de supprimer cette version.');
@@ -240,6 +258,7 @@ export default function OutliersModule() {
             flex: 1, padding: '10px 14px', borderRadius: '14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer',
             transition: 'all 0.2s', border: '1px solid', borderColor: isActive ? '#dc2626' : '#e2e8f0',
             backgroundColor: isActive ? '#dc2626' : '#ffffff', color: isActive ? '#ffffff' : '#64748b',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
         }),
 
         checkboxContainer: {
@@ -252,7 +271,13 @@ export default function OutliersModule() {
         }),
 
         actionBtn: { width: '100%', padding: '12px 18px', backgroundColor: '#dc2626', color: '#ffffff', fontWeight: '700', border: 'none', borderRadius: '16px', cursor: 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background-color 0.2s', marginTop: '8px' },
-        smallBtn: { padding: '4px 8px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#ffffff', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer' },
+        smallBtn: (active) => ({
+            padding: '4px 8px', fontSize: '11px', fontWeight: 'bold',
+            backgroundColor: active ? '#fee2e2' : '#ffffff',
+            color: active ? '#991b1b' : '#475569',
+            border: '1px solid', borderColor: active ? '#fca5a5' : '#e2e8f0',
+            borderRadius: '8px', cursor: 'pointer', transition: 'all 0.15s ease'
+        }),
 
         resultCard: { backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '24px', padding: '20px', minWidth: 0 },
         table: { width: '100%', borderCollapse: 'separate', borderSpacing: 0, backgroundColor: '#ffffff', borderRadius: '16px', overflow: 'hidden', fontSize: '13px', border: '1px solid #e2e8f0' },
@@ -270,7 +295,7 @@ export default function OutliersModule() {
         <div style={styles.wrapper}>
             <div style={styles.container}>
 
-                {/* HEADER */}
+                {/* HEADER CARD */}
                 <div style={styles.headerCard}>
                     <div style={styles.topBar}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -292,42 +317,41 @@ export default function OutliersModule() {
                 {/* GRID CONTENT */}
                 <div style={styles.gridContainer}>
 
-                    {/* PANEL DE CONFIGURATION */}
+                    {/* PANEL TRÁI: CẤU HÌNH XỬ LÝ */}
                     <div style={styles.card}>
-                        <h2 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: '700', color: '#0f172a', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px' }}>
-                            ⚙️ Configuration des Outliers
+                        <h2 style={{ margin: '0 0 16px 0', fontSize: '15px', fontWeight: '700', color: '#0f172a', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Sliders size={18} color="#dc2626" /> Configuration des Outliers
                         </h2>
 
-                        {/* 1. Version Source */}
+                        {/* 1. Scope Attraction (ĐƯA LÊN ĐẦU) */}
                         <div style={styles.formGroup}>
-                            <label style={styles.label}>1. Version Source (Parent)</label>
-                            <div style={styles.selectBox}>
-                                <Layers size={14} color="#94a3b8" />
-                                <select value={selectedParent} onChange={(e) => setSelectedParent(e.target.value)} style={styles.select}>
-                                    <option value="v0_raw">v0_raw (Données brutes)</option>
-                                    {Object.keys(versions).map((vId) => (
-                                        <option key={vId} value={vId}>{vId}</option>
+                            <label style={styles.label}>1. Scope Attraction (id_attraction)</label>
+                            <div style={{ ...styles.selectBox, backgroundColor: '#f0f9ff', borderColor: '#bae6fd' }}>
+                                <Filter size={14} color="#0284c7" />
+                                <select value={selectedAttraction} onChange={(e) => setSelectedAttraction(e.target.value)} style={{ ...styles.select, color: '#0369a1' }}>
+                                    <option value="ALL">🌐 Tous les sites (ALL)</option>
+                                    {availableAttractions.map((attr) => (
+                                        <option key={attr} value={attr}>🎢 Attraction ID: {attr}</option>
                                     ))}
                                 </select>
                             </div>
                         </div>
 
-                        {/* 2. Périmètre Attraction */}
+                        {/* 2. Version Source (Parent) (ĐƯA XUỐNG DƯỚI) */}
                         <div style={styles.formGroup}>
-                            <label style={styles.label}>2. Périmètre Attraction (id_attraction)</label>
-                            <div style={{ ...styles.selectBox, backgroundColor: '#f0f9ff', borderColor: '#bae6fd' }}>
-                                <Filter size={14} color="#0284c7" />
-                                <select value={selectedAttraction} onChange={(e) => setSelectedAttraction(e.target.value)} style={{ ...styles.select, color: '#0369a1' }}>
-                                    <option value="ALL">🌐 Tous les sites (ALL)</option>
-                                    {availableAttractions.length > 0 ? (
-                                        availableAttractions.map((attr) => (
-                                            <option key={attr} value={attr}>🎢 Attraction ID: {attr}</option>
-                                        ))
-                                    ) : (
-                                        ['H03', 'H07'].map((attr) => (
-                                            <option key={attr} value={attr}>🎢 Attraction ID: {attr}</option>
-                                        ))
-                                    )}
+                            <label style={styles.label}>2. Version Source (Parent)</label>
+                            <div style={styles.selectBox}>
+                                <Layers size={14} color="#94a3b8" />
+                                <select value={selectedParent} onChange={(e) => setSelectedParent(e.target.value)} style={styles.select}>
+                                    <option value="v0_raw">v0_raw</option>
+                                    {parentVersionsList.map(([vId, vObj]) => {
+                                        if (vId === 'v0_raw') return null;
+                                        return (
+                                            <option key={vId} value={vId}>
+                                                {vId} {vObj?.step_type ? `(${vObj.step_type})` : ''}
+                                            </option>
+                                        );
+                                    })}
                                 </select>
                             </div>
                         </div>
@@ -337,33 +361,54 @@ export default function OutliersModule() {
                             <label style={styles.label}>3. Type d'approche</label>
                             <div style={{ display: 'flex', gap: '8px' }}>
                                 <button type="button" onClick={() => { setTreatmentMode('by_column'); setErrorMsg(null); }} style={styles.toggleBtn(treatmentMode === 'by_column')}>
-                                    📊 Multi-Colonnes
+                                    <BarChart2 size={14} /> Multi-Colonnes
                                 </button>
                                 <button type="button" onClick={() => { setTreatmentMode('domain_rules'); setErrorMsg(null); }} style={styles.toggleBtn(treatmentMode === 'domain_rules')}>
-                                    🌟 Règles Métier
+                                    <Sparkles size={14} /> Règles Métier
                                 </button>
                             </div>
                         </div>
 
                         {treatmentMode === 'by_column' && (
                             <>
-                                {/* 4. Selection des Colonnes */}
+                                {/* 4. Sélection des Colonnes */}
                                 <div style={styles.formGroup}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                        <label style={{ ...styles.label, margin: 0 }}>4. Colonnes ({selectedColumns.length})</label>
+                                        <label style={{ ...styles.label, margin: 0 }}>
+                                            4. Colonnes ({selectedColumns.length}/{availableColumns.length})
+                                        </label>
                                         <div style={{ display: 'flex', gap: '4px' }}>
-                                            <button type="button" onClick={handleSelectAllColumns} style={styles.smallBtn}>Tout</button>
-                                            <button type="button" onClick={handleDeselectAllColumns} style={styles.smallBtn}>Aucun</button>
+                                            <button type="button" onClick={handleSelectOutlierColumnsOnly} style={styles.smallBtn(true)} title="Sélectionner uniquement les colonnes contenant des outliers">
+                                                Avec aberrants
+                                            </button>
+                                            <button type="button" onClick={handleSelectAllColumns} style={styles.smallBtn(false)}>Tout</button>
+                                            <button type="button" onClick={handleDeselectAllColumns} style={styles.smallBtn(false)}>Aucun</button>
                                         </div>
                                     </div>
 
+                                    {/* Column Search Box */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '6px 10px', borderRadius: '12px', marginBottom: '8px' }}>
+                                        <Search size={14} color="#94a3b8" />
+                                        <input
+                                            type="text"
+                                            placeholder="Rechercher une colonne..."
+                                            value={columnSearch}
+                                            onChange={(e) => setColumnSearch(e.target.value)}
+                                            style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '12px', width: '100%', color: '#0f172a' }}
+                                        />
+                                    </div>
+
                                     <div style={styles.checkboxContainer}>
-                                        {availableColumns.length === 0 ? (
+                                        {fetchingStats ? (
+                                            <div style={{ fontSize: '12px', color: '#94a3b8', padding: '12px', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                                                <RefreshCw className="animate-spin" size={14} /> Chargement des statistiques...
+                                            </div>
+                                        ) : filteredColumns.length === 0 ? (
                                             <div style={{ fontSize: '12px', color: '#94a3b8', padding: '8px', textAlign: 'center' }}>
                                                 Aucune colonne disponible
                                             </div>
                                         ) : (
-                                            availableColumns.map((col) => {
+                                            filteredColumns.map((col) => {
                                                 const outlierCount = columnsOutliersInfo[col] ?? 0;
                                                 const isChecked = selectedColumns.includes(col);
                                                 return (
@@ -464,7 +509,7 @@ export default function OutliersModule() {
                         )}
                     </div>
 
-                    {/* PANEL DROIT: RAPPORT DÉTAILLÉ (AVANT / APRÈS / NETTOYÉS) */}
+                    {/* PANEL PHẢI: BÁO CÁO CHI TIẾT & DANH SÁCH VERSION */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', minWidth: 0 }}>
 
                         {/* RAPPORT DE LA VERSION SÉLECTIONNÉE */}
@@ -508,7 +553,7 @@ export default function OutliersModule() {
                                                 <th style={styles.th}>Colonne</th>
                                                 <th style={{ ...styles.th, textAlign: 'center' }}>Avant</th>
                                                 <th style={{ ...styles.th, textAlign: 'center' }}>Après</th>
-                                                <th style={{ ...styles.th, textAlign: 'center' }}>Nettoyés</th>
+                                                <th style={{ ...styles.th, textAlign: 'center' }}>Traités</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -531,7 +576,6 @@ export default function OutliersModule() {
 
                                                 return cols.map((col) => {
                                                     const avant = beforeObj[col] ?? 0;
-                                                    // Si action != 'none', après est généralement 0 sauf règles complexes
                                                     const apres = afterObj[col] ?? (selectedVersion.action === 'none' ? avant : 0);
                                                     const nettoyes = Math.max(0, avant - apres);
 
@@ -563,7 +607,7 @@ export default function OutliersModule() {
                             </div>
                         )}
 
-                        {/* DANH SÁCH VERSION ĐÃ LỌC THEO ATTRACTION */}
+                        {/* DANH SÁCH VERSION ĐÃ LỌC THEO MODULE VÀ ATTRACTION */}
                         <div style={styles.card}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px' }}>
                                 <h2 style={{ margin: 0, fontSize: '15px', fontWeight: '700', color: '#0f172a' }}>
@@ -574,15 +618,15 @@ export default function OutliersModule() {
                                 </span>
                             </div>
 
-                            {filteredVersions.length === 0 ? (
+                            {moduleVersions.length === 0 ? (
                                 <p style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '13px', margin: 0 }}>
                                     Aucune version enregistrée pour {selectedAttraction === 'ALL' ? 'tous les sites' : `l'attraction ${selectedAttraction}`}.
                                 </p>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    {filteredVersions.map((v) => {
+                                    {moduleVersions.map((v) => {
                                         const isSelected = selectedVersion && selectedVersion.version_id === v.version_id;
-                                        const attrValue = v.id_attraction;
+                                        const attrValue = v.id_attraction || v.attraction_id;
                                         return (
                                             <div key={v.version_id} onClick={() => setSelectedVersion(v)} style={styles.versionItem(isSelected)}>
                                                 <div style={{ flex: 1, minWidth: 0 }}>

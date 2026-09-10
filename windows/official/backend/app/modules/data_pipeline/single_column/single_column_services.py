@@ -5,8 +5,35 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.modules.data_pipeline.queries import get_dynamic_gathering_query
-
 from app.modules.data_pipeline.utils import clean_nan_and_inf
+
+
+def get_sorted_versions(db: Session) -> List[str]:
+    """Lấy danh sách các bảng phiên bản trong schema data_prep được sắp xếp theo thời gian tạo (c.oid ASC)."""
+    db.commit()
+    query = text("""
+        SELECT c.relname
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'data_prep' 
+          AND c.relkind = 'r'
+          AND c.relname NOT IN ('data_version_registry', 'ml_model_registry')
+        ORDER BY c.oid ASC;
+    """)
+    try:
+        result = db.execute(query).fetchall()
+        tables = [row[0] for row in result]
+    except Exception:
+        db.rollback()
+        tables = []
+
+    if "v0_raw" in tables:
+        tables.remove("v0_raw")
+        tables.insert(0, "v0_raw")
+    elif not tables:
+        tables = ["v0_raw"]
+
+    return tables
 
 
 def get_dataframe_from_version_local(
@@ -74,7 +101,6 @@ def analyser_profil_colonne_seule(
 
     df_target = df.copy()
 
-    # Filter bổ sung theo attraction nếu dữ liệu chưa được lọc ở SQL level
     if (
         id_attraction
         and str(id_attraction).upper() != "ALL"
@@ -90,7 +116,6 @@ def analyser_profil_colonne_seule(
             "erreur": f"Không có dữ liệu cho id_attraction = '{id_attraction}' và version = '{version}'"
         }
 
-    # Ép về dạng số trước
     df_target[col_name] = pd.to_numeric(df_target[col_name], errors="coerce")
     serie = df_target[col_name]
     serie_valide = serie.dropna()
@@ -106,12 +131,7 @@ def analyser_profil_colonne_seule(
     nb_unique = int(serie.nunique(dropna=True))
 
     nb_zeros, pct_zeros, nb_negatifs, pct_negatifs, nb_outliers, pct_outliers = (
-        0,
-        0.0,
-        0,
-        0.0,
-        0,
-        0.0,
+        0, 0.0, 0, 0.0, 0, 0.0,
     )
     box_plot_data, histogram_data = None, None
     line_plots_data = {
@@ -150,7 +170,6 @@ def analyser_profil_colonne_seule(
             ],
         }
 
-        # Histogram
         counts, bin_edges = np.histogram(serie_valide, bins=20)
         histogram_data = []
         for i in range(len(counts)):
@@ -168,7 +187,6 @@ def analyser_profil_colonne_seule(
                 }
             )
 
-        # Time Series Aggregation
         if "datetime" in df_target.columns:
             df_target["datetime"] = pd.to_datetime(df_target["datetime"])
 
@@ -273,31 +291,39 @@ def analyser_profil_colonne_seule(
         },
     }
 
+
 def analyser_multi_versions(
     db: Session,
     col_name: str,
     versions: List[str],
     id_attraction: Optional[str] = "ALL"
 ) -> Dict[str, Any]:
-    """Phân tích đồng thời một cột trên nhiều version khác nhau để trả về chung một payload."""
+    """Phân tích đồng thời một cột trên nhiều version khác nhau theo đúng thứ tự thời gian khởi tạo."""
+    # 1. Lấy danh sách thứ tự version chuẩn từ PostgreSQL (sắp xếp theo thời gian tạo bảng c.oid)
+    sorted_db_versions = get_sorted_versions(db)
+
+    # 2. Sắp xếp danh sách versions đầu vào theo đúng thứ tự khởi tạo
+    ordered_versions = [v for v in sorted_db_versions if v in versions]
+    # Bổ sung các version nếu có trong danh sách truyền vào nhưng chưa tìm thấy ở DB query
+    for v in versions:
+        if v not in ordered_versions:
+            ordered_versions.append(v)
+
     results = {}
-    for ver in versions:
+    for ver in ordered_versions:
         try:
-            # 1. Lấy dataframe theo từng version
             df = get_dataframe_from_version_local(
                 db=db, version_id=ver, id_attraction=id_attraction
             )
             if df.empty:
                 continue
             
-            # 2. Chạy hàm phân tích đơn
             res = analyser_profil_colonne_seule(
                 df=df, col_name=col_name, id_attraction=id_attraction, version=ver
             )
             if "erreur" not in res:
                 results[ver] = clean_nan_and_inf(res)
         except Exception as e:
-            # Bỏ qua lỗi nhỏ của version đơn lẻ để không làm sập cả cụm so sánh
             print(f"Erreur analyse version {ver}: {str(e)}")
             continue
             
